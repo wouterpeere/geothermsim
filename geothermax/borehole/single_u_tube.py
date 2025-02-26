@@ -18,7 +18,7 @@ class SingleUTube(Borehole):
         return self._heat_extraction_rate(self.xi, m_flow, cp_f)
 
     def _general_solution_a_in(self, xi, m_flow, cp_f):
-        s = self.path._s(xi)
+        s = self.path.f_s(xi)
         a_in = jnp.stack(
             (
                 self._f1(s, m_flow, cp_f),
@@ -29,7 +29,7 @@ class SingleUTube(Borehole):
         return a_in
 
     def _general_solution_a_out(self, xi, m_flow, cp_f):
-        s = self.path._s(xi)
+        s = self.path.f_s(xi)
         a_out = jnp.stack(
             (
                 self._f2(s, m_flow, cp_f),
@@ -40,9 +40,9 @@ class SingleUTube(Borehole):
         return a_out
 
     def _general_solution_a_b(self, xi, m_flow, cp_f):
-        f1 = jax.vmap(lambda _eta: self._f4(self.path._s(xi) - self.path._s(_eta), m_flow, cp_f) * self.path._J(_eta), in_axes=0)
-        f2 = jax.vmap(lambda _eta: -self._f5(self.path._s(xi) - self.path._s(_eta), m_flow, cp_f) * self.path._J(_eta), in_axes=0)
-        high = jnp.maximum(-1., jnp.minimum(1., self._f_bs(xi)))
+        f1 = jax.vmap(lambda _eta: self._f4(self.path.f_s(xi) - self.path.f_s(_eta), m_flow, cp_f) * self.path.f_J(_eta), in_axes=0)
+        f2 = jax.vmap(lambda _eta: -self._f5(self.path.f_s(xi) - self.path.f_s(_eta), m_flow, cp_f) * self.path.f_J(_eta), in_axes=0)
+        high = jnp.maximum(-1., jnp.minimum(1., self.f_xi_bs(xi)))
         a, b = self.xi_edges[:-1], self.xi_edges[1:]
         a_b = jnp.stack(
             [
@@ -85,7 +85,7 @@ class SingleUTube(Borehole):
         b_in, b_b = self._fluid_temperature(xi, m_flow, cp_f)
         R_b = self.R_d[0, 0] * self.R_d[1, 1] / (self.R_d[0, 0] + self.R_d[1, 1])
         a_in = -(b_in[:, 0] / self.R_d[0, 0] + b_in[:, 1] / self.R_d[1, 1])
-        a_b = -(b_b[:, 0, :] / self.R_d[0, 0] + b_b[:, 1, :] / self.R_d[1, 1]) + self._psi_mapped(xi) / R_b
+        a_b = -(b_b[:, 0, :] / self.R_d[0, 0] + b_b[:, 1, :] / self.R_d[1, 1]) + jax.vmap(self.f_psi, in_axes=0)(xi) / R_b
         return a_in, a_b
 
     def _outlet_fluid_temperature(self, m_flow, cp_f):
@@ -93,12 +93,12 @@ class SingleUTube(Borehole):
         a_in = (self._f1(L, m_flow, cp_f) + self._f2(L, m_flow, cp_f)) / (self._f3(L, m_flow, cp_f) - self._f2(L, m_flow, cp_f))
         f = jax.vmap(
             lambda _eta: (
-                self._f4(L - self.path._s_mapped(self._f_sb(_eta)), m_flow, cp_f)
-                + self._f5(L - self.path._s_mapped(self._f_sb(_eta)), m_flow, cp_f)
+                self._f4(L - self.path.F_s(self.f_xi_sb(_eta)), m_flow, cp_f)
+                + self._f5(L - self.path.F_s(self.f_xi_sb(_eta)), m_flow, cp_f)
             ) / (
                 self._f3(L, m_flow, cp_f)
                 - self._f2(L, m_flow, cp_f)
-            ) * self.path._J_mapped(self._f_sb(_eta)) * self.segment_ratios,
+            ) * self.path.F_J(self.f_xi_sb(_eta)) * self.segment_ratios,
             in_axes=0,
             out_axes=-1)
         a_b = self.basis.integrate_fixed_gl(f, -1, 1.).flatten()
