@@ -27,23 +27,24 @@ class Path:
         A = vmap(lambda _eta: _eta**p_power, in_axes=0, out_axes=0)(xi)
         p_coefs = jnp.linalg.solve(A, p)
         f_p = lambda _eta: _eta**p_power @ p_coefs
-        self.f_p = jit(f_p)
-        F_p = vmap(f_p, in_axes=0)
-        self.F_p = jit(F_p)
+        # self.f_p = jit(f_p)
+        self.f_p = jit(
+            lambda _eta: vmap(f_p, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_p(_eta)
+        )
         # Derivative of position (dp/dxi)
         f_p_i = lambda _eta, _coefs: _eta**p_power @ _coefs
         f_dp_dxi = lambda _eta: vmap(
             grad(f_p_i),
             in_axes=(None, 1)
         )(_eta, p_coefs)
-        self.f_dp_dxi = jit(f_dp_dxi)
-        F_dp_dxi = vmap(f_dp_dxi, in_axes=0)
-        self.F_dp_dxi = jit(F_dp_dxi)
+        self.f_dp_dxi = jit(
+            lambda _eta: vmap(f_dp_dxi, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_dp_dxi(_eta)
+        )
         # Norm of the Jacobian (J)
         f_J = lambda _eta: jnp.linalg.norm(f_dp_dxi(_eta))
-        self.f_J = jit(f_J)
-        F_J = vmap(f_J, in_axes=0)
-        self.F_J = jit(F_J)
+        self.f_J = jit(
+            lambda _eta: vmap(f_J, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_J(_eta)
+        )
         # Longitudinal position (s)
         x_s, w_s = roots_legendre(s_order)
         x_s = jnp.array(x_s)
@@ -52,7 +53,7 @@ class Path:
         high = x_s
         s = jnp.cumsum(
             vmap(
-                lambda _a, _b: self.F_J(0.5 * (_a + _b) + 0.5 * x_s * (_b - _a)) @ w_s * 0.5 * (_b - _a),
+                lambda _a, _b: self.f_J(0.5 * (_a + _b) + 0.5 * x_s * (_b - _a)) @ w_s * 0.5 * (_b - _a),
                 in_axes=(0, 0)
             )(low, high)
         )
@@ -60,14 +61,41 @@ class Path:
         A = vmap(lambda eta: eta**s_power, in_axes=0)(x_s)
         s_coefs = jnp.linalg.solve(A, s)
         f_s = lambda _eta: _eta**s_power @ s_coefs
-        self.f_s = jit(f_s)
-        F_s = vmap(f_s, in_axes=0)
-        self.F_s = jit(F_s)
+        self.f_s = jit(
+            lambda _eta: vmap(f_s, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_s(_eta)
+        )
 
     @partial(jit, static_argnames=['self'])
     def point_heat_source(self, xi, p, time, alpha, r_min=0.):
-        p_jv = self.f_p(xi)
-        r = jnp.sqrt(jnp.linalg.norm(p_jv - p)**2 + r_min**2)
-        r_mirror = jnp.linalg.norm(p_jv - p * jnp.array([1, 1, -1]))
+        h = partial(
+            self._point_heat_source,
+            r_min=r_min)
+        # Add vmaps over (xi), (p) and (time) if they are arrays
+        # The output shape wil be: (n_time, n_p, n_xi)
+        if len(jnp.shape(xi)) == 1:
+            h = vmap(
+                h,
+                in_axes=(0, None, None, None)
+            )
+        if len(jnp.shape(p)) == 2:
+            h = vmap(
+                h,
+                in_axes=(None, 0, None, None)
+            )
+        if len(jnp.shape(time)) == 1:
+            h = vmap(
+                h,
+                in_axes=(None, None, 0, None)
+            )
+        return h(xi, p, time, alpha)
+
+    def _point_heat_source(self, xi, p, time, alpha, r_min=0.):
+        # Current position of the point source
+        p_source = self.f_p(xi)
+        # Distance to the real point (p)
+        r = jnp.sqrt(jnp.linalg.norm(p_source - p)**2 + r_min**2)
+        # Distance to the mirror point (p')
+        r_mirror = jnp.linalg.norm(p_source - p * jnp.array([1, 1, -1]))
+        # Point heat source solution
         h = 0.5 * erfc(r / jnp.sqrt(4 * alpha * time)) / r - 0.5 * erfc(r_mirror / jnp.sqrt(4 * alpha * time)) / r_mirror
         return h * self.f_J(xi)

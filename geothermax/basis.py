@@ -23,9 +23,9 @@ class Basis:
             np.power.outer(self.xi, power)
         )
         f_psi = lambda _eta: _eta**power @ coefs
-        self.f_psi = jit(f_psi)
-        F_psi = vmap(f_psi, in_axes=0)
-        self.F_psi = jit(F_psi)
+        self.f_psi = jit(
+            lambda _eta: vmap(f_psi, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_psi(_eta)
+        )
 
         # --- Initialize quadrature methods ---
         self._initialize_quad_methods(order)
@@ -49,7 +49,7 @@ class Basis:
         low, high = interval[:-1], interval[1:]
         self._x_ts = jnp.concatenate([0.5 * (b + a) + 0.5 * (b - a) * x for a, b in zip(low, high)])
         self._w_ts = jnp.concatenate([0.5 * (b - a) * w for a, b in zip(low, high)])
-        self._psi_ts = self.F_psi(self._x_ts)
+        self._psi_ts = self.f_psi(self._x_ts)
 
     def _initialize_fixed_quad_gl(self, order):
         x, w = roots_legendre(order)
@@ -59,13 +59,13 @@ class Basis:
         low, high = interval[:-1], interval[1:]
         self._x_gl = jnp.concatenate([0.5 * (b + a) + 0.5 * (b - a) * x for a, b in zip(low, high)])
         self._w_gl = jnp.concatenate([0.5 * (b - a) * w for a, b in zip(low, high)])
-        self._psi_gl = self.F_psi(self._x_gl)
+        self._psi_gl = self.f_psi(self._x_gl)
 
     def integrate_fixed_gl(self, fun, a, b):
         x, w = roots_legendre(self.order)
         x = 0.5 * (b + a) + 0.5 * (b - a) * jnp.array(x)
         w = 0.5 * (b - a) * jnp.array(w)
-        _psi = self.F_psi(x)
+        _psi = self.f_psi(x)
         integral = lambda xi, w, psi: (fun(xi) * psi) @ w
         return vmap(integral, in_axes=(None, None, 1), out_axes=-1)(x, w, _psi)
 

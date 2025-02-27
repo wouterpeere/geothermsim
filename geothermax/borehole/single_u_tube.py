@@ -93,12 +93,12 @@ class SingleUTube(Borehole):
         a_in = (self._f1(L, m_flow, cp_f) + self._f2(L, m_flow, cp_f)) / (self._f3(L, m_flow, cp_f) - self._f2(L, m_flow, cp_f))
         f = jax.vmap(
             lambda _eta: (
-                self._f4(L - self.path.F_s(self.f_xi_sb(_eta)), m_flow, cp_f)
-                + self._f5(L - self.path.F_s(self.f_xi_sb(_eta)), m_flow, cp_f)
+                self._f4(L - self.path.f_s(self.f_xi_sb(_eta)), m_flow, cp_f)
+                + self._f5(L - self.path.f_s(self.f_xi_sb(_eta)), m_flow, cp_f)
             ) / (
                 self._f3(L, m_flow, cp_f)
                 - self._f2(L, m_flow, cp_f)
-            ) * self.path.F_J(self.f_xi_sb(_eta)) * self.segment_ratios,
+            ) * self.path.f_J(self.f_xi_sb(_eta)) * self.segment_ratios,
             in_axes=0,
             out_axes=-1)
         a_b = self.basis.integrate_fixed_gl(f, -1, 1.).flatten()
