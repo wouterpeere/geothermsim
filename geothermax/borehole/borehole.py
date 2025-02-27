@@ -38,7 +38,7 @@ class Borehole:
         self.F_xi_bs = jit(F_xi_bs)
 
         # --- Basis functions ---
-        # Weights at interfaces bewteen segments
+        # Weights at interfaces between segments
         w_interfaces = jnp.concatenate([jnp.array([1.]), jnp.full(n_segments - 1, 0.5), jnp.array([1.])])
         f_w_interfaces = lambda _eta: jnp.heaviside(b - _eta, w_interfaces[1:]) * jnp.heaviside(_eta - a, w_interfaces[:-1])
         f_psi = lambda _eta: jax.vmap(
@@ -62,37 +62,69 @@ class Borehole:
         # Longitudinal positions (s)
         self.s = path.F_s(xi)
 
-    @partial(jax.jit, static_argnames=['self'])
-    def point_heat_source(self, xi, p, time, alpha, r_min=0.):
-        xi_segments = self.f_xi_sb(xi)
-        return jax.vmap(lambda eta: self.path.point_heat_source(eta, p, time, alpha, r_min=r_min), in_axes=0)(xi_segments) * self.segment_ratios
-
     def h_to_borehole(self, borehole, time, alpha):
         return self.h_to_point(borehole.p, time, alpha)
 
-    @partial(jax.jit, static_argnames=['self'])
-    def h_to_self(self, time, alpha):
-        point_heat_source = jax.vmap(
-            jax.vmap(
-                partial(self.point_heat_source, r_min=self.r_b),
-                in_axes=(None, 0, None, None)
-                ),
-            in_axes=(None, None, 0, None)
-            )
-        fun = jax.vmap(lambda xi: point_heat_source(xi, self.p, time, alpha), in_axes=0, out_axes=-1)
-        # return self.basis.integrate_fixed_ts(fun)
-        n_times = len(time)
-        return self.basis.integrate_subintervals_fixed_ts(fun).reshape(n_times, self.n_nodes, self.n_nodes)
+    @partial(jit, static_argnames=['self'])
+    def h_to_coordinate_on_self(self, xi, time, alpha):
+        # Positions (p) of points on self
+        p = self.path.F_p(xi)
+        return self.h_to_point(p, time, alpha, r_min=self.r_b)
 
-    @partial(jax.jit, static_argnames=['self'])
+    
+    @partial(jit, static_argnames=['self'])
     def h_to_point(self, p, time, alpha, r_min=0):
-        point_heat_source = jax.vmap(
-            jax.vmap(
-                partial(self.point_heat_source, r_min=r_min),
-                in_axes=(None, 0, None, None)
-                ),
-            in_axes=(None, None, 0, None)
-            )
-        fun = jax.vmap(lambda xi: point_heat_source(xi, p, time, alpha), in_axes=0, out_axes=-1)
+        # Integrand of point heat source
+        integrand = vmap(
+            lambda _eta: self._point_heat_source(_eta, p, time, alpha, r_min=r_min),
+            in_axes=0,
+            out_axes=-1)
         n_times = len(time)
-        return self.basis.integrate_subintervals_fixed_gl(fun).reshape(n_times, -1, self.n_nodes)
+        n_nodes = self.n_nodes
+        h_to_point = self.basis.integrate_subintervals_fixed_gl(
+            integrand
+        ).reshape(n_times, -1, n_nodes)
+        return h_to_point
+        
+
+    @partial(jit, static_argnames=['self'])
+    def h_to_self(self, time, alpha):
+        # Integrand of point heat source evaluated at borehole nodes
+        integrand = vmap(
+            lambda _eta: self._point_heat_source(_eta, self.p, time, alpha, r_min=self.r_b),
+            in_axes=0,
+            out_axes=-1)
+        # Integral of the point heat source
+        n_times = len(time)
+        n_nodes = self.n_nodes
+        h_to_self = self.basis.integrate_subintervals_fixed_ts(
+            integrand
+        ).reshape(n_times, n_nodes, n_nodes)
+        return h_to_self
+
+
+    @partial(jit, static_argnames=['self'])
+    def _point_heat_source(self, xi_p, p, time, alpha, r_min=0.):
+        # Coordinates (xi) of all sources at local segment coordinates (xi')
+        xi = self.f_xi_sb(xi_p)
+        # Point heat source solutions
+        point_heat_source = partial(
+            self.path.point_heat_source,
+            r_min=r_min)
+        h = vmap(
+            point_heat_source,
+            in_axes=(0, None, None, None)
+        )
+        # Add vmaps over (p) and (time) if they are arrays
+        # The output shape wil be: (n_time, n_p, n_segments)
+        if len(jnp.shape(p)) == 2:
+            h = vmap(
+                h,
+                in_axes=(None, 0, None, None)
+            )
+        if len(jnp.shape(time)) == 1:
+            h = vmap(
+                h,
+                in_axes=(None, None, 0, None)
+            )
+        return h(xi, p, time, alpha) * self.segment_ratios
