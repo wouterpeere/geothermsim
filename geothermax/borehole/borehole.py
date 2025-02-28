@@ -80,8 +80,8 @@ class Borehole:
             out_axes=-1)
         n_times = len(time)
         n_nodes = self.n_nodes
-        h_to_point = self.basis.integrate_subintervals_fixed_gl(
-            integrand
+        h_to_point = self.basis.quad_gl(
+            integrand, -1., 1.
         ).reshape(n_times, -1, n_nodes)
         return h_to_point
 
@@ -95,7 +95,7 @@ class Borehole:
         # Integral of the point heat source
         n_times = len(time)
         n_nodes = self.n_nodes
-        h_to_self = self.basis.integrate_subintervals_fixed_ts(
+        h_to_self = self.basis.quad_ts_nodes(
             integrand
         ).reshape(n_times, n_nodes, n_nodes)
         return h_to_self

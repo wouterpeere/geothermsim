@@ -48,7 +48,7 @@ class SingleUTube(Borehole):
             [
                 jnp.stack(
                     [
-                        self.basis.integrate_fixed_gl(
+                        self.basis.quad_gl(
                             lambda _eta: f1(0.5 * (b[v] + a[v]) + 0.5 * _eta * (b[v] - a[v])) * self.segment_ratios[v],
                             -1.,
                             high[v])
@@ -57,7 +57,7 @@ class SingleUTube(Borehole):
                 ),
                     jnp.stack(
                     [
-                        self.basis.integrate_fixed_gl(
+                        self.basis.quad_gl(
                             lambda _eta: f2(0.5 * (b[v] + a[v]) + 0.5 * _eta * (b[v] - a[v])) * self.segment_ratios[v],
                             -1.,
                             high[v])
@@ -101,7 +101,7 @@ class SingleUTube(Borehole):
             ) * self.path.f_J(self.f_xi_sb(_eta)) * self.segment_ratios,
             in_axes=0,
             out_axes=-1)
-        a_b = self.basis.integrate_fixed_gl(f, -1, 1.).flatten()
+        a_b = self.basis.quad_gl(f, -1, 1.).flatten()
         return a_in, a_b
 
     def _beta1(self, m_flow, cp_f):
