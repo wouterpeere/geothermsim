@@ -2,6 +2,7 @@
 from functools import partial
 
 from jax import numpy as jnp
+from jax import jit, vmap
 import jax
 from scipy.special import roots_legendre
 
@@ -14,8 +15,48 @@ class SingleUTube(Borehole):
         super().__init__(r_b, path, basis, n_segments, segment_ratios=segment_ratios)
         self.R_d = R_d
 
-    def G(self, m_flow, cp_f):
+    @partial(jit, static_argnames=['self'])
+    def G(self, xi, m_flow, cp_f):
+        return self._heat_extraction_rate(xi, m_flow, cp_f)
+
+    @partial(jit, static_argnames=['self'])
+    def G_to_self(self, m_flow, cp_f):
         return self._heat_extraction_rate(self.xi, m_flow, cp_f)
+
+    @partial(jit, static_argnames=['self'])
+    def fluid_temperature(self, xi, T_f_in, T_b, m_flow, cp_f):
+        a_in, a_b = self._fluid_temperature(xi, m_flow, cp_f)
+        T_f = a_in * T_f_in + a_b @ T_b
+        return T_f
+
+    @partial(jit, static_argnames=['self'])
+    def heat_extraction_rate(self, xi, T_f_in, T_b, m_flow, cp_f):
+        a_in, a_b = self._heat_extraction_rate(xi, m_flow, cp_f)
+        q = a_in * T_f_in + a_b @ T_b
+        return q
+
+    @partial(jit, static_argnames=['self'])
+    def heat_extraction_rate_to_self(self, T_f_in, T_b, m_flow, cp_f):
+        return self.heat_extraction_rate(self.xi, T_f_in, T_b, m_flow, cp_f)
+
+    @partial(jit, static_argnames=['self'])
+    def outlet_fluid_temperature(self, T_f_in, T_b, m_flow, cp_f):
+        a_in, a_b = self._outlet_fluid_temperature(m_flow, cp_f)
+        q = a_in * T_f_in + a_b @ T_b
+        return q
+
+    def _fluid_temperature(self, xi, m_flow, cp_f):
+        b_in, b_b = self._outlet_fluid_temperature(m_flow, cp_f)
+        c_in, c_out, c_b = self._general_solution(xi, m_flow, cp_f)
+        a_in = c_in + b_in * c_out
+        a_b = c_b + jax.vmap(jnp.outer, in_axes=(0, None))(c_out, b_b)
+        return a_in, a_b
+
+    def _general_solution(self, xi, m_flow, cp_f):
+        a_in = jax.vmap(self._general_solution_a_in, in_axes=(0, None, None))(xi, m_flow, cp_f)
+        a_out = jax.vmap(self._general_solution_a_out, in_axes=(0, None, None))(xi, m_flow, cp_f)
+        a_b = jax.vmap(self._general_solution_a_b, in_axes=(0, None, None))(xi, m_flow, cp_f).reshape(-1, 2, self.n_nodes)
+        return a_in, a_out, a_b
 
     def _general_solution_a_in(self, xi, m_flow, cp_f):
         s = self.path.f_s(xi)
@@ -40,46 +81,33 @@ class SingleUTube(Borehole):
         return a_out
 
     def _general_solution_a_b(self, xi, m_flow, cp_f):
-        f1 = jax.vmap(lambda _eta: self._f4(self.path.f_s(xi) - self.path.f_s(_eta), m_flow, cp_f) * self.path.f_J(_eta), in_axes=0)
-        f2 = jax.vmap(lambda _eta: -self._f5(self.path.f_s(xi) - self.path.f_s(_eta), m_flow, cp_f) * self.path.f_J(_eta), in_axes=0)
+        s = self.path.f_s(xi)
+        f1 = lambda _eta: self._f4(s - self.path.f_s(_eta), m_flow, cp_f) * self.path.f_J(_eta)
+        f2 = lambda _eta: -self._f5(s - self.path.f_s(_eta), m_flow, cp_f) * self.path.f_J(_eta)
         high = jnp.maximum(-1., jnp.minimum(1., self.f_xi_bs(xi)))
         a, b = self.xi_edges[:-1], self.xi_edges[1:]
-        a_b = jnp.stack(
+        f_xi_bs = lambda _eta, _a, _b: 0.5 * (_b + _a) + 0.5 * _eta * (_b - _a)
+        integrand = lambda _eta, _a, _b, _ratio: jnp.stack(
             [
-                jnp.stack(
-                    [
-                        self.basis.quad_gl(
-                            lambda _eta: f1(0.5 * (b[v] + a[v]) + 0.5 * _eta * (b[v] - a[v])) * self.segment_ratios[v],
-                            -1.,
-                            high[v])
-                        for v in range(self.n_segments)
-                    ]
+                f1(f_xi_bs(_eta, _a, _b)) * _ratio,
+                f2(f_xi_bs(_eta, _a, _b)) * _ratio,
+            ]
+        )
+        integral = lambda _a, _b, _ratio, _high: self.basis.quad_gl(
+                vmap(
+                    lambda _eta: integrand(_eta, _a, _b, _ratio),
+                    in_axes=0,
+                    out_axes=-1
                 ),
-                    jnp.stack(
-                    [
-                        self.basis.quad_gl(
-                            lambda _eta: f2(0.5 * (b[v] + a[v]) + 0.5 * _eta * (b[v] - a[v])) * self.segment_ratios[v],
-                            -1.,
-                            high[v])
-                        for v in range(self.n_segments)
-                    ]
-                )
-            ],
-            axis=0)
+            -1.,
+            _high
+            )
+        a_b = vmap(
+                integral,
+                in_axes=(0, 0, 0, 0),
+                out_axes=1
+            )(a, b, self.segment_ratios, high)
         return a_b
-        
-    def _fluid_temperature(self, xi, m_flow, cp_f):
-        b_in, b_b = self._outlet_fluid_temperature(m_flow, cp_f)
-        c_in, c_out, c_b = self._general_solution(xi, m_flow, cp_f)
-        a_in = c_in + b_in * c_out
-        a_b = c_b + jax.vmap(jnp.outer, in_axes=(0, None))(c_out, b_b)
-        return a_in, a_b
-
-    def _general_solution(self, xi, m_flow, cp_f):
-        a_in = jax.vmap(self._general_solution_a_in, in_axes=(0, None, None))(xi, m_flow, cp_f)
-        a_out = jax.vmap(self._general_solution_a_out, in_axes=(0, None, None))(xi, m_flow, cp_f)
-        a_b = jax.vmap(self._general_solution_a_b, in_axes=(0, None, None))(xi, m_flow, cp_f).reshape(-1, 2, self.n_nodes)
-        return a_in, a_out, a_b
 
     def _heat_extraction_rate(self, xi, m_flow, cp_f):
         b_in, b_b = self._fluid_temperature(xi, m_flow, cp_f)
