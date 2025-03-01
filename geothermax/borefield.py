@@ -14,28 +14,44 @@ class Borefield:
     def __init__(self, boreholes):
         self.boreholes = boreholes
         self.n_boreholes = len(boreholes)
+        self.n_nodes = boreholes[0].n_nodes
+        self.L = jnp.concatenate([borehole.xi for borehole in self.boreholes])
+
+        # --- Nodal values of path and basis functions ---
+        # Borehole coordinates (xi)
+        self.xi = self.boreholes[0].xi
+        # Positions (p)
+        self.p = jnp.stack([borehole.p for borehole in self.boreholes], axis=-2)
+        # Derivatives of position (dp/dxi)
+        self.dp_dxi = jnp.stack([borehole.dp_dxi for borehole in self.boreholes], axis=-2)
+        # Norms of the Jacobian (J)
+        self.J = jnp.stack([borehole.J for borehole in self.boreholes], axis=-1)
+        # Longitudinal positions (s)
+        self.s = jnp.stack([borehole.s for borehole in self.boreholes], axis=-1)
 
     def h_to_self(self, time, alpha):
-        h = jnp.stack(
+        n_boreholes = self.n_boreholes
+        h_to_self = jnp.stack(
             [
                 jnp.stack(
                     [
                         self.boreholes[j].h_to_self(time, alpha) if i == j else self.boreholes[j].h_to_borehole(self.boreholes[i], time, alpha)
-                        for j in jnp.arange(self.n_boreholes)
+                        for j in jnp.arange(n_boreholes)
                     ],
                     axis=-2)
-                for i in jnp.arange(self.n_boreholes)
+                for i in jnp.arange(n_boreholes)
             ],
             axis=1)
-        return h
+        return h_to_self
 
     def h_to_point(self, p, time, alpha, r_min=0.):
-        h = jnp.stack(
+        n_boreholes = self.n_boreholes
+        h_to_point = jnp.stack(
             [
-                self.boreholes[j].h_to_point(p, time, alpha, r_min=r_min) for j in jnp.arange(self.n_boreholes)
+                self.boreholes[j].h_to_point(p, time, alpha, r_min=r_min) for j in jnp.arange(n_boreholes)
                 ],
             axis=-2)
-        return h
+        return h_to_point
 
     @classmethod
     def from_positions(cls, H, D, r_b, x, y, basis, n_segments, tilt=0., orientation=0., segment_ratios=None, order=None):
