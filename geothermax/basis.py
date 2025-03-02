@@ -11,7 +11,7 @@ from scipy.special import roots_legendre
 
 class Basis:
 
-    def __init__(self, xi, order=101, order_nodes=21):
+    def __init__(self, xi, order=101, order_nodes=21, w=None):
         # --- Class atributes ---
         self.xi = xi
         self.n_nodes = len(xi)
@@ -27,9 +27,16 @@ class Basis:
         self.f_psi = jit(
             lambda _eta: vmap(f_psi, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_psi(_eta)
         )
+        self.f = jit(
+            lambda _eta, f_nodes: self.f_psi(_eta) @ f_nodes
+        )
 
         # --- Initialize quadrature methods ---
         self._initialize_quad_methods(order, order_nodes)
+        # Integration weights
+        if w is None:
+            self.f_psi(self._x_gl).T @ self._w_gl
+        self.w = w
 
     def _initialize_quad_methods(self, order, order_nodes):
         self._x_gl, self._w_gl = self._gauss_legendre_rule(order)
@@ -90,5 +97,7 @@ class Basis:
 
     @classmethod
     def Legendre(cls, n_nodes, order=101, order_nodes=21):
-        xi = jnp.array(roots_legendre(n_nodes)[0])
-        return cls(xi, order=order, order_nodes=order_nodes)
+        xi, w = roots_legendre(n_nodes)
+        xi = jnp.array(xi)
+        w = jnp.array(w)
+        return cls(xi, order=order, order_nodes=order_nodes, w=w)

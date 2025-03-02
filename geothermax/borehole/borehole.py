@@ -5,6 +5,8 @@ from jax import jit, vmap
 from jax import numpy as jnp
 import jax
 
+from ..path import Path
+
 
 class Borehole:
 
@@ -48,6 +50,9 @@ class Borehole:
         self.f_psi = jit(
             lambda _eta: vmap(f_psi, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_psi(_eta)
         )
+        self.f = jit(
+            lambda _eta, f_nodes: self.f_psi(_eta) @ f_nodes
+        )
 
         # --- Nodal values of path and basis functions ---
         # Borehole coordinates (xi)
@@ -61,6 +66,8 @@ class Borehole:
         self.J = path.f_J(xi)
         # Longitudinal positions (s)
         self.s = path.f_s(xi)
+        # Integration weights
+        self.w = (jnp.tile(basis.w, (n_segments, 1)).T * segment_ratios).T.flatten() * self.J
 
     def h_to_borehole(self, borehole, time, alpha):
         return self.h_to_point(borehole.p, time, alpha)
@@ -107,3 +114,15 @@ class Borehole:
         # Point heat source solutions
         h = self.path.point_heat_source(xi, p, time, alpha, r_min=r_min) * self.segment_ratios
         return h
+
+    @classmethod
+    def from_dimensions(cls, L, D, r_b, x, y, basis, n_segments, tilt=0., orientation=0., segment_ratios=None, order=None):
+        xi = jnp.array([-1., 1.])
+        p = jnp.array(
+            [
+                [x, y, -D],
+                [x + L * jnp.sin(tilt) * jnp.cos(orientation), y + L * jnp.sin(tilt) * jnp.sin(orientation), -D - L * jnp.cos(tilt)],
+            ]
+        )
+        path = Path(xi, p, order=order)
+        return cls(r_b, path, basis, n_segments, segment_ratios=segment_ratios)
