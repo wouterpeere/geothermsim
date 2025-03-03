@@ -19,9 +19,11 @@ class LoadAggregation:
         self.A = self._load_shifting_matrix(self.time)
         self.q = jnp.zeros((len(self.time) - 1, borefield.n_boreholes, borefield.n_nodes))
         self.h_to_self = borefield.h_to_self(self.time[1:], alpha)
+        self.h_to_self = self.h_to_self.at[1:].set(jnp.diff(self.h_to_self, axis=0))
         self.h_to_self_from_self = jnp.diagonal(self.h_to_self, axis1=1, axis2=3)
         if p is not None:
             self.h_to_point = borefield.h_to_point(p, self.time[1:], alpha)
+            self.h_to_point = self.h_to_point.at[1:].set(jnp.diff(self.h_to_self, axis=0))
         else:
             self.h_to_point = jnp.zeros((0, borefield.n_boreholes, borefield.n_nodes))
 
