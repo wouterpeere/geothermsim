@@ -32,6 +32,10 @@ class LoadAggregation:
         self._time += self.dt
         return self._time
 
+    def reset_history(self):
+        self.q = self.q.at[:].set(0.)
+        return
+
     def set_current_load(self, q):
         self.q = self._current_load(self.q, q)
         return
