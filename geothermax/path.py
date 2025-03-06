@@ -67,29 +67,24 @@ class Path:
 
     @partial(jit, static_argnames=['self'])
     def point_heat_source(self, xi, p, time, alpha, r_min=0.):
-        h = partial(
-            self._point_heat_source,
-            r_min=r_min)
-        # Add vmaps over (xi), (p) and (time) if they are arrays
-        # The output shape wil be: (n_time, n_p, n_xi)
-        if len(jnp.shape(xi)) == 1:
-            h = vmap(
-                h,
-                in_axes=(0, None, None, None)
-            )
-        if len(jnp.shape(p)) == 2:
-            h = vmap(
-                h,
-                in_axes=(None, 0, None, None)
-            )
-        if len(jnp.shape(time)) == 1:
-            h = vmap(
-                h,
-                in_axes=(None, None, 0, None)
-            )
-        return h(xi, p, time, alpha)
+        return self._point_heat_source(xi, p, time, alpha, r_min)
 
-    def _point_heat_source(self, xi, p, time, alpha, r_min=0.):
+    def _point_heat_source(self, xi, p, time, alpha, r_min):
+        if len(jnp.shape(time)) > 0:
+            return vmap(
+                self._point_heat_source,
+                in_axes=(None, None, -1, None, None)
+            )(xi, p, time, alpha, r_min)
+        if len(jnp.shape(p)) > 1:
+            return vmap(
+                self._point_heat_source,
+                in_axes=(None, -2, None, None, None)
+            )(xi, p, time, alpha, r_min)
+        if len(jnp.shape(xi)) > 0:
+            return vmap(
+                self._point_heat_source,
+                in_axes=(-1, None, None, None, None)
+            )(xi, p, time, alpha, r_min)
         # Current position of the point source
         p_source = self.f_p(xi)
         # Distance to the real point (p)
