@@ -17,8 +17,8 @@ class Network(Borefield):
 
     @partial(jit, static_argnames=['self'])
     def effective_borefield_thermal_resistance(self, m_flow, cp_f):
-        a = self._outlet_fluid_temperature(m_flow, cp_f)[0].mean()
-        b = jnp.sum(self._heat_extraction_rate(self.xi, m_flow, cp_f)[0] * self.w)
+        a = self._outlet_fluid_temperature_a_in(m_flow, cp_f).mean()
+        b = jnp.sum(self._heat_extraction_rate_a_in(self.xi, m_flow, cp_f) * self.w)
         # Effective borehole thermal resistance
         R_field = -0.5 * self.L.sum() * (1. + a) / b
         return R_field
@@ -54,6 +54,11 @@ class Network(Borefield):
         return T_f_out
 
     def _fluid_temperature(self, xi, m_flow, cp_f):
+        a_in = self._fluid_temperature_a_in(xi, m_flow, cp_f)
+        a_b = self._fluid_temperature_a_b(xi, m_flow, cp_f)
+        return a_in, a_b
+
+    def _fluid_temperature_a_in(self, xi, m_flow, cp_f):
         m_flow_borehole = m_flow / self.n_boreholes
         a_in = jnp.stack(
             [
@@ -62,6 +67,10 @@ class Network(Borefield):
             ],
             axis=0
         )
+        return a_in
+
+    def _fluid_temperature_a_b(self, xi, m_flow, cp_f):
+        m_flow_borehole = m_flow / self.n_boreholes
         a_b = jnp.stack(
             [
                 borehole._fluid_temperature_a_b(xi, m_flow_borehole, cp_f)
@@ -69,9 +78,15 @@ class Network(Borefield):
             ],
             axis=0
         )
-        return a_in, a_b
+        return a_b
 
     def _heat_extraction_rate(self, xi, m_flow, cp_f):
+        m_flow_borehole = m_flow / self.n_boreholes
+        a_in = self._heat_extraction_rate_a_in(xi, m_flow, cp_f)
+        a_b = self._heat_extraction_rate_a_b(xi, m_flow, cp_f)
+        return a_in, a_b
+
+    def _heat_extraction_rate_a_in(self, xi, m_flow, cp_f):
         m_flow_borehole = m_flow / self.n_boreholes
         a_in = jnp.stack(
             [
@@ -80,6 +95,10 @@ class Network(Borefield):
             ],
             axis=0
         )
+        return a_in
+
+    def _heat_extraction_rate_a_b(self, xi, m_flow, cp_f):
+        m_flow_borehole = m_flow / self.n_boreholes
         a_b = jnp.stack(
             [
                 borehole._heat_extraction_rate_a_b(xi, m_flow_borehole, cp_f)
@@ -87,9 +106,15 @@ class Network(Borefield):
             ],
             axis=0
         )
-        return a_in, a_b
+        return a_b
 
     def _outlet_fluid_temperature(self, m_flow, cp_f):
+        m_flow_borehole = m_flow / self.n_boreholes
+        a_in = self._outlet_fluid_temperature_a_in(m_flow, cp_f)
+        a_b = self._outlet_fluid_temperature_a_b(m_flow, cp_f)
+        return a_in, a_b
+
+    def _outlet_fluid_temperature_a_in(self, m_flow, cp_f):
         m_flow_borehole = m_flow / self.n_boreholes
         a_in = jnp.stack(
             [
@@ -98,6 +123,10 @@ class Network(Borefield):
             ],
             axis=0
         )
+        return a_in
+
+    def _outlet_fluid_temperature_a_b(self, m_flow, cp_f):
+        m_flow_borehole = m_flow / self.n_boreholes
         a_b = jnp.stack(
             [
                 borehole._outlet_fluid_temperature_a_b(m_flow_borehole, cp_f)
@@ -105,7 +134,7 @@ class Network(Borefield):
             ],
             axis=0
         )
-        return a_in, a_b
+        return a_b
 
     @classmethod
     def from_positions(cls, L, D, r_b, x, y, R_d, basis, n_segments, tilt=0., orientation=0., segment_ratios=None, order=None):
