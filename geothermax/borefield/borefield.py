@@ -6,8 +6,8 @@ from jax import jit, vmap
 from jax import numpy as jnp
 import jax
 
-from .borehole import Borehole
-from .path import Path
+from ..borehole import Borehole
+from ..path import Path
 
 
 class Borefield:

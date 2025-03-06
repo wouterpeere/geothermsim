@@ -6,8 +6,8 @@ from jax import numpy as jnp
 import jax
 
 from .borefield import Borefield
-from .borehole import SingleUTube
-from .path import Path
+from ..borehole import SingleUTube
+from ..path import Path
 
 
 class Network(Borefield):
