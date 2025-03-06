@@ -17,6 +17,14 @@ class SingleUTube(Borehole):
         self.R_d = R_d
 
     @partial(jit, static_argnames=['self'])
+    def effective_borehole_thermal_resistance(self, m_flow, cp_f):
+        a = self._outlet_fluid_temperature_a_in(m_flow, cp_f)
+        b = self._heat_extraction_rate_a_in(self.xi, m_flow, cp_f) @ self.w
+        # Effective borehole thermal resistance
+        R_b = -0.5 * self.L * (1. + a) / b
+        return R_b
+
+    @partial(jit, static_argnames=['self'])
     def g(self, xi, m_flow, cp_f):
         return self._heat_extraction_rate(xi, m_flow, cp_f)
 
