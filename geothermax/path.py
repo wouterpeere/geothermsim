@@ -32,11 +32,7 @@ class Path:
             lambda _eta: vmap(f_p, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_p(_eta)
         )
         # Derivative of position (dp/dxi)
-        f_p_i = lambda _eta, _coefs: _eta**p_power @ _coefs
-        f_dp_dxi = lambda _eta: vmap(
-            grad(f_p_i),
-            in_axes=(None, 1)
-        )(_eta, p_coefs)
+        f_dp_dxi = lambda _eta: jax.jacobian(f_p)(_eta)
         self.f_dp_dxi = jit(
             lambda _eta: vmap(f_dp_dxi, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_dp_dxi(_eta)
         )
