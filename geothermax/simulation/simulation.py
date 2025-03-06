@@ -22,9 +22,14 @@ class Simulation:
         self.k_s = k_s
         self.cells_per_level = cells_per_level
         self.p = p
+        if p is None:
+            self.T = None
+            self.n_points = 0
+        else:
+            self.n_points = p.shape[0]
 
         self.loadAgg = LoadAggregation(
-            borefield, dt, tmax, 1e-6, cells_per_level=cells_per_level, p=p)
+            borefield, dt, tmax, alpha, cells_per_level=cells_per_level, p=p)
         self.initialize_systems_of_equations()
 
     def initialize_systems_of_equations(self):
@@ -46,6 +51,8 @@ class Simulation:
         self.q = jnp.zeros((self.n_times, self.borefield.n_boreholes, self.borefield.n_nodes))
         self.T_b = jnp.zeros((self.n_times, self.borefield.n_boreholes, self.borefield.n_nodes))
         self.T_f_in = jnp.zeros(self.n_times)
+        if self.p is not None:
+            self.T = jnp.zeros((self.n_times, self.n_points))
         while time < self.tmax:
             time = self.loadAgg.next_time_step()
             if callable(Q):
@@ -60,5 +67,7 @@ class Simulation:
             self.T_b = self.T_b.at[k].set(X[self.N:2*self.N].reshape((self.borefield.n_boreholes, -1)))
             self.T_f_in = self.T_f_in.at[k].set(X[-1])
             self.loadAgg.set_current_load(self.q[k] / (2 * jnp.pi * self.k_s))
+            if self.p is not None:
+                self.T = self.T.at[k].set(self.T0 - self.loadAgg.temperature_to_point())
             k += 1
         return

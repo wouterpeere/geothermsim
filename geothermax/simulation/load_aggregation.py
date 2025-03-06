@@ -15,15 +15,15 @@ class LoadAggregation:
         self.cells_per_level = cells_per_level
         self.p = p
         self._time = 0.
+        self._k = -1
         self.time = self._load_aggregation_cells(dt, tmax, cells_per_level)
         self.A = self._load_shifting_matrix(self.time)
         self.q = jnp.zeros((len(self.time) - 1, borefield.n_boreholes, borefield.n_nodes))
         self.h_to_self = borefield.h_to_self(self.time[1:], alpha)
         self.h_to_self = self.h_to_self.at[1:].set(jnp.diff(self.h_to_self, axis=0))
-        self.h_to_self_from_self = jnp.diagonal(self.h_to_self, axis1=1, axis2=3)
         if p is not None:
             self.h_to_point = borefield.h_to_point(p, self.time[1:], alpha)
-            self.h_to_point = self.h_to_point.at[1:].set(jnp.diff(self.h_to_self, axis=0))
+            self.h_to_point = self.h_to_point.at[1:].set(jnp.diff(self.h_to_point, axis=0))
         else:
             self.h_to_point = jnp.zeros((0, borefield.n_boreholes, borefield.n_nodes))
 
@@ -34,6 +34,8 @@ class LoadAggregation:
 
     def reset_history(self):
         self.q = self.q.at[:].set(0.)
+        self._time = 0.
+        self._k = -1
         return
 
     def set_current_load(self, q):
@@ -42,10 +44,6 @@ class LoadAggregation:
 
     def temperature(self):
         T = self._temperature(self.h_to_self, self.q)
-        return T
-
-    def temperature_from_self(self):
-        T = self._temperature_from_self(self.h_to_self_from_self, self.q)
         return T
 
     def temperature_to_point(self):
@@ -66,15 +64,6 @@ class LoadAggregation:
     @jit
     def _temperature(h, q):
         T = jnp.tensordot(h, q, axes=([0, -2, -1], [0, -2, -1]))
-        return T
-
-    @staticmethod
-    @jit
-    def _temperature_from_self(h, q):
-        T = vmap(
-            partial(jnp.tensordot, axes=([0, 2], [0, 1])),
-            in_axes=(3, 1)
-        )(h, q)
         return T
 
     @staticmethod
