@@ -5,8 +5,10 @@ from jax import jit, vmap
 from jax import numpy as jnp
 import jax
 
+from ._temporal_superposition import _TemporalSuperposition
 
-class LoadAggregation:
+
+class LoadAggregation(_TemporalSuperposition):
 
     def __init__(self, borefield, dt, tmax, alpha, cells_per_level=5, p=None):
         self.borefield = borefield
@@ -52,25 +54,13 @@ class LoadAggregation:
 
     @staticmethod
     @jit
-    def _next_time_step(A, q):
-        return jnp.tensordot(A, q, axes=(1, 0))
-
-    @staticmethod
-    @jit
     def _current_load(q_history, q):
         return q_history.at[0].set(q)
 
     @staticmethod
     @jit
-    def _temperature(h, q):
-        T = jnp.tensordot(h, q, axes=([0, -2, -1], [0, -2, -1]))
-        return T
-
-    @staticmethod
-    @jit
-    def _temperature_to_point(h, q):
-        T = jnp.tensordot(h, q, axes=([0, -2, -1], [0, -2, -1]))
-        return T
+    def _next_time_step(A, q):
+        return jnp.tensordot(A, q, axes=(1, 0))
 
     @staticmethod
     def _load_aggregation_cells(dt, tmax, cells_per_level):
