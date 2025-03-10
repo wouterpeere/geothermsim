@@ -5,6 +5,7 @@ from jax import grad, jit, vmap
 from jax import numpy as jnp
 from jax.scipy.special import erfc
 import jax
+import numpy as np
 from scipy.special import roots_legendre
 
 
@@ -14,19 +15,23 @@ class Path:
         # --- Class atributes ---
         self.xi = xi
         self.p = p
-        self.order = order
         n_nodes = len(xi)
         self.n_nodes = n_nodes
+        if order is None:
+            order = n_nodes
+        order = jnp.maximum(2, jnp.minimum(order, n_nodes))
+        self.order = order
         if s_order is None:
             s_order = 2 * (self.n_nodes - 1)
         self.s_order = s_order
 
         # --- Path functions ---
         # Position (p)
-        p_power = jnp.arange(n_nodes)
-        A = vmap(lambda _eta: _eta**p_power, in_axes=0, out_axes=0)(xi)
-        p_coefs = jnp.linalg.solve(A, p)
-        f_p = lambda _eta: _eta**p_power @ p_coefs
+        p_w = np.ones(n_nodes)
+        if order < n_nodes:
+            p_w[0] = 1e4
+        p_coefs = jnp.array(np.polyfit(xi, p, order-1, w=p_w))
+        f_p = lambda _eta: jnp.polyval(p_coefs, _eta)
         # self.f_p = jit(f_p)
         self.f_p = jit(
             lambda _eta: vmap(f_p, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_p(_eta)
