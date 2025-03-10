@@ -35,7 +35,7 @@ class Basis:
         self._initialize_quad_methods(order, order_nodes)
         # Integration weights
         if w is None:
-            self.f_psi(self._x_gl).T @ self._w_gl
+            w = self.f_psi(self._x_gl).T @ self._w_gl
         self.w = w
 
     def _initialize_quad_methods(self, order, order_nodes):
