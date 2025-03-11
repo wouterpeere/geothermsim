@@ -3,3 +3,4 @@ from .path import Path
 from .borehole import Borehole, SingleUTube
 from .borefield import Borefield, Network
 from .simulation import LoadAggregation, Simulation, LoadHistoryReconstruction, gFunction
+from . import utilities
