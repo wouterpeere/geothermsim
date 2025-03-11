@@ -32,7 +32,6 @@ class Path:
             p_w[0] = 1e4
         p_coefs = jnp.array(np.polyfit(xi, p, order-1, w=p_w))
         f_p = lambda _eta: jnp.polyval(p_coefs, _eta)
-        # self.f_p = jit(f_p)
         self.f_p = jit(
             lambda _eta: vmap(f_p, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_p(_eta)
         )
@@ -58,10 +57,8 @@ class Path:
                 in_axes=(0, 0)
             )(low, high)
         )
-        s_power = jnp.arange(s_order)
-        A = vmap(lambda eta: eta**s_power, in_axes=0)(x_s)
-        s_coefs = jnp.linalg.solve(A, s)
-        f_s = lambda _eta: _eta**s_power @ s_coefs
+        s_coefs = jnp.array(np.polyfit(x_s, s, s_order-1))
+        f_s = lambda _eta: jnp.polyval(s_coefs, _eta)
         self.f_s = jit(
             lambda _eta: vmap(f_s, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_s(_eta)
         )
