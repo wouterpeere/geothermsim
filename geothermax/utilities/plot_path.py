@@ -16,7 +16,7 @@ def plot_path(path, num=101, view='all', ax=None):
     if view == '3d':
         return _plot_3d(path, num=num, ax=ax)
     if view == 'all':
-        fig = plt.figure()
+        fig = plt.figure(layout='constrained')
         axs = [
             fig.add_subplot(221),
             fig.add_subplot(222, projection='3d'),
@@ -33,7 +33,7 @@ def plot_path(path, num=101, view='all', ax=None):
 def _plot_xy(path, num=101, ax=None):
     ax_is_none = ax is None
     if ax is None:
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(layout='constrained')
     _format_axis(ax, axis_labels=[r'$x$ [m]', r'$y$ [m]'], equal=True)
 
     xi = jnp.linspace(-1., 1., num=num)
@@ -50,8 +50,6 @@ def _plot_xy(path, num=101, ax=None):
         ax.plot(p[:, 0], p[:, 1])
         ax.plot(p[0, 0], p[0, 1], 'k.')
 
-    plt.tight_layout()
-
     if ax_is_none:
         return fig, ax
     else:
@@ -61,7 +59,7 @@ def _plot_xy(path, num=101, ax=None):
 def _plot_yz(path, num=101, ax=None):
     ax_is_none = ax is None
     if ax is None:
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(layout='constrained')
     _format_axis(ax, axis_labels=[r'$y$ [m]', r'$z$ [m]'], equal=True)
 
     xi = jnp.linspace(-1., 1., num=num)
@@ -78,8 +76,6 @@ def _plot_yz(path, num=101, ax=None):
         ax.plot(p[:, 1], p[:, 2])
         ax.plot(p[0, 1], p[0, 2], 'k.')
 
-    plt.tight_layout()
-
     if ax_is_none:
         return fig, ax
     else:
@@ -89,7 +85,7 @@ def _plot_yz(path, num=101, ax=None):
 def _plot_xz(path, num=101, ax=None):
     ax_is_none = ax is None
     if ax is None:
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(layout='constrained')
     _format_axis(ax, axis_labels=[r'$x$ [m]', r'$z$ [m]'], equal=True)
 
     xi = jnp.linspace(-1., 1., num=num)
@@ -106,8 +102,6 @@ def _plot_xz(path, num=101, ax=None):
         ax.plot(p[:, 0], p[:, 2])
         ax.plot(p[0, 0], p[0, 2], 'k.')
 
-    plt.tight_layout()
-
     if ax_is_none:
         return fig, ax
     else:
@@ -117,7 +111,7 @@ def _plot_xz(path, num=101, ax=None):
 def _plot_3d(path, num=101, ax=None):
     ax_is_none = ax is None
     if ax is None:
-        fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
+        fig, ax = plt.subplots(subplot_kw={'projection': '3d'}, layout='constrained')
     _format_axis(ax, axis_labels=[r'$x$ [m]', r'$y$ [m]', r'$z$ [m]'], equal=True)
 
     xi = jnp.linspace(-1., 1., num=num)
@@ -133,8 +127,6 @@ def _plot_3d(path, num=101, ax=None):
 
         ax.plot(p[:, 0], p[:, 1], p[:, 2])
         ax.plot(p[0, 0], p[0, 1], p[0, 2], 'k.')
-
-    plt.tight_layout()
 
     if ax_is_none:
         return fig, ax
