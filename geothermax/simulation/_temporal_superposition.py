@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 from abc import ABC, abstractmethod
 
-from jax import jit
+import jax
 from jax import numpy as jnp
+from jax import Array, jit
 
 
 class _TemporalSuperposition(ABC):
 
     @abstractmethod
-    def next_time_step(self):
+    def next_time_step(self) -> float:
         ...
 
     @abstractmethod
@@ -16,25 +17,25 @@ class _TemporalSuperposition(ABC):
         ...
 
     @abstractmethod
-    def set_current_load(self, q):
+    def set_current_load(self, q: Array):
         ...
 
     @abstractmethod
-    def temperature(self):
+    def temperature(self) -> Array:
         ...
 
     @abstractmethod
-    def temperature_to_point(self):
+    def temperature_to_point(self) -> Array:
         ...
 
     @staticmethod
     @jit
-    def _temperature(h, q):
+    def _temperature(h: Array, q: Array) -> Array:
         T = jnp.tensordot(h, q, axes=([0, -2, -1], [0, -2, -1]))
         return T
 
     @staticmethod
     @jit
-    def _temperature_to_point(h, q):
+    def _temperature_to_point(h: Array, q: Array) -> Array:
         T = jnp.tensordot(h, q, axes=([0, -2, -1], [0, -2, -1]))
         return T

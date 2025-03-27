@@ -1,24 +1,34 @@
 # -*- coding: utf-8 -*-
 from functools import partial
+from typing import Self
 
-from jax import jit, vmap
-from jax import numpy as jnp
 import jax
+from jax import numpy as jnp
+from jax import Array, jit, vmap
+from jax.typing import ArrayLike
 
+from ..basis import Basis
 from ..path import Path
 
 
 class Borehole:
 
-    def __init__(self, r_b, path, basis, n_segments, segment_ratios=None):
+    def __init__(self, r_b: float, path: Path, basis: Basis, n_segments: int, segment_ratios: ArrayLike | None = None):
+        # Runtime type validation
+        if not isinstance(segment_ratios, ArrayLike) and segment_ratios is not None:
+            raise TypeError(f"Expected arraylike or None input; got {segment_ratios}")
+        # Convert input to jax.Array
+        if segment_ratios is None:
+            segment_ratios = jnp.full(n_segments, 1. / n_segments)
+        else:
+            segment_ratios = jnp.asarray(segment_ratios)
+
         # --- Class attributes ---
         self.r_b = r_b
         self.path = path
         self.basis = basis
         self.n_segments = n_segments
         self.n_nodes = basis.n_nodes * n_segments
-        if segment_ratios is None:
-            segment_ratios = jnp.full(n_segments, 1. / n_segments)
         self.segment_ratios = segment_ratios
         # Segment edges
         xi_edges = jnp.concatenate((-jnp.ones(1), 2 * jnp.cumsum(segment_ratios) - 1))
@@ -69,17 +79,17 @@ class Borehole:
         # Integration weights
         self.w = (jnp.tile(basis.w, (n_segments, 1)).T * segment_ratios).T.flatten() * self.J
 
-    def h_to_borehole(self, borehole, time, alpha):
+    def h_to_borehole(self, borehole: Self, time: ArrayLike, alpha: float) -> Array:
         return self.h_to_point(borehole.p, time, alpha)
 
     @partial(jit, static_argnames=['self'])
-    def h_to_coordinate_on_self(self, xi, time, alpha):
+    def h_to_coordinate_on_self(self, xi: Array, time: Array, alpha: float) -> Array:
         # Positions (p) of points on self
         p = self.path.f_p(xi)
         return self.h_to_point(p, time, alpha, r_min=self.r_b)
 
     @partial(jit, static_argnames=['self'])
-    def h_to_point(self, p, time, alpha, r_min=0):
+    def h_to_point(self, p: Array, time: Array, alpha: float, r_min: float = 0.):
         # Integrand of point heat source
         integrand = vmap(
             lambda _eta: self._segment_point_heat_source(_eta, p, time, alpha, r_min=r_min),
@@ -93,7 +103,7 @@ class Borehole:
         return h_to_point
 
     @partial(jit, static_argnames=['self'])
-    def h_to_self(self, time, alpha):
+    def h_to_self(self, time: Array, alpha: float):
         # Integrand of point heat source evaluated at borehole nodes
         integrand = vmap(
             lambda _eta: self._segment_point_heat_source(_eta, self.p, time, alpha, r_min=self.r_b),
@@ -108,7 +118,7 @@ class Borehole:
         return h_to_self
 
     @partial(jit, static_argnames=['self'])
-    def _segment_point_heat_source(self, xi_p, p, time, alpha, r_min=0.):
+    def _segment_point_heat_source(self, xi_p: float, p: Array, time: Array | float, alpha: float, r_min: float = 0.) -> Array:
         # Coordinates (xi) of all sources at local segment coordinates (xi')
         xi = self.f_xi_sb(xi_p)
         # Point heat source solutions
@@ -116,7 +126,7 @@ class Borehole:
         return h
 
     @classmethod
-    def from_dimensions(cls, L, D, r_b, x, y, basis, n_segments, tilt=0., orientation=0., segment_ratios=None, order=None):
+    def from_dimensions(cls, L: float, D: float, r_b: float, x: float, y: float, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None, order: int | None = None) -> Self:
         xi = jnp.array([-1., 1.])
         p = jnp.array(
             [

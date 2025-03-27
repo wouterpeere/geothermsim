@@ -1,12 +1,18 @@
 # -*- coding: utf-8 -*-
+from typing import List, Tuple
+
 from jax import numpy as jnp
-import jax
 from matplotlib import pyplot as plt
 
 from ._format_axis import _format_axis
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from mpl_toolkits.mplot3d.axes3d import Axes3D
+
+from ..path import Path
 
 
-def plot_path(path, num=101, view='all', ax=None):
+def plot_path(path: Path | List[Path], num: int = 101, view: str = 'all', ax: Axes | Axes3D | None = None) -> Axes | Axes3D | Tuple[Figure, Axes] | Tuple[Figure, Axes3D] | Tuple[Figure, List[Axes | Axes3D]]:
     if view == 'xy' or view == 'yx':
         return _plot_xy(path, num=num, ax=ax)
     if view == 'yz' or view == 'zy':
@@ -30,7 +36,7 @@ def plot_path(path, num=101, view='all', ax=None):
         return fig, axs
 
 
-def _plot_xy(path, num=101, ax=None):
+def _plot_xy(path: Path | List[Path], num: int = 101, ax: Axes | None = None) -> Axes | Tuple[Figure, Axes]:
     ax_is_none = ax is None
     if ax is None:
         fig, ax = plt.subplots(layout='constrained')
@@ -56,7 +62,7 @@ def _plot_xy(path, num=101, ax=None):
         return ax
 
 
-def _plot_yz(path, num=101, ax=None):
+def _plot_yz(path: Path | List[Path], num: int = 101, ax: Axes | None = None) -> Axes | Tuple[Figure, Axes]:
     ax_is_none = ax is None
     if ax is None:
         fig, ax = plt.subplots(layout='constrained')
@@ -82,7 +88,7 @@ def _plot_yz(path, num=101, ax=None):
         return ax
 
 
-def _plot_xz(path, num=101, ax=None):
+def _plot_xz(path: Path | List[Path], num: int = 101, ax: Axes | None = None) -> Axes | Tuple[Figure, Axes]:
     ax_is_none = ax is None
     if ax is None:
         fig, ax = plt.subplots(layout='constrained')
@@ -108,7 +114,7 @@ def _plot_xz(path, num=101, ax=None):
         return ax
 
 
-def _plot_3d(path, num=101, ax=None):
+def _plot_3d(path: Path | List[Path], num: int = 101, ax: Axes3D | None = None) -> Axes3D | Tuple[Figure, Axes3D]:
     ax_is_none = ax is None
     if ax is None:
         fig, ax = plt.subplots(subplot_kw={'projection': '3d'}, layout='constrained')

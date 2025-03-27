@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
-from jax import numpy as jnp
-import jax
-from matplotlib import pyplot as plt
+from typing import Tuple
 
+from jax import numpy as jnp
+from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+
+from ..basis import Basis
 from ._format_axis import _format_axis
 
 
-def plot_basis(basis, num=101, ax=None):
+def plot_basis(basis: Basis, num: int = 101, ax: Axes | None = None) -> Axes | Tuple[Figure, Axes]:
     ax_is_none = ax is None
     if ax is None:
         fig, ax = plt.subplots(layout='constrained')

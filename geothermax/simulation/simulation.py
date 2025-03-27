@@ -1,16 +1,25 @@
 # -*- coding: utf-8 -*-
-from functools import partial
+from collections.abc import Callable
 
-from jax import jit, vmap
-from jax import numpy as jnp
 import jax
+from jax import numpy as jnp
+from jax import Array, jit, vmap
+from jax.typing import ArrayLike
 
+from ..borefield.network import Network
 from .load_aggregation import LoadAggregation
 
 
 class Simulation:
 
-    def __init__(self, borefield, m_flow, cp_f, dt, tmax, T0, alpha, k_s, cells_per_level=5, p=None):
+    def __init__(self, borefield: Network, m_flow: float, cp_f: float, dt: float, tmax: float, T0: float, alpha: float, k_s: float, cells_per_level: int = 5, p: ArrayLike | None = None):
+        # Runtime type validation
+        if not isinstance(p, ArrayLike) and p is not None:
+            raise TypeError(f"Expected arraylike or None input; got {p}")
+        # Convert input to jax.Array
+        if p is not None:
+            p = jnp.asarray(p)
+
         self.borefield = borefield
         self.m_flow = m_flow
         self.cp_f = cp_f
@@ -44,7 +53,7 @@ class Simulation:
             )
         self.B = jnp.zeros(2 * N + 1)
 
-    def simulate(self, Q, Q_small=1e-3):
+    def simulate(self, Q: Callable[[float], float], Q_small: float = 1e-3):
         self.loadAgg.reset_history()
         time = 0.
         k = 0

@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
-from functools import partial
-from itertools import product
+from typing import List, Self
 
-from jax import jit, vmap
-from jax import numpy as jnp
 import jax
+from jax import numpy as jnp
+from jax import Array, jit, vmap
+from jax.typing import ArrayLike
 
+from ..basis import Basis
 from ..borehole import Borehole
 from ..path import Path
 
 
 class Borefield:
 
-    def __init__(self, boreholes):
+    def __init__(self, boreholes: List[Borehole]):
         self.boreholes = boreholes
         self.n_boreholes = len(boreholes)
         self.n_nodes = boreholes[0].n_nodes
@@ -46,7 +47,7 @@ class Borefield:
         # Integration weights
         self.w = jnp.stack([borehole.w for borehole in self.boreholes], axis=0)
 
-    def h_to_self(self, time, alpha):
+    def h_to_self(self, time: Array, alpha: float) -> Array:
         n_boreholes = self.n_boreholes
         h_to_self = jnp.stack(
             [
@@ -61,7 +62,7 @@ class Borefield:
             axis=1)
         return h_to_self
 
-    def h_to_point(self, p, time, alpha, r_min=0.):
+    def h_to_point(self, p: Array, time: Array, alpha: float, r_min: float = 0.) -> Array:
         n_boreholes = self.n_boreholes
         h_to_point = jnp.stack(
             [
@@ -71,7 +72,16 @@ class Borefield:
         return h_to_point
 
     @classmethod
-    def from_positions(cls, L, D, r_b, x, y, basis, n_segments, tilt=0., orientation=0., segment_ratios=None, order=None):
+    def from_positions(cls, L: ArrayLike, D: ArrayLike, r_b: ArrayLike, x: ArrayLike, y: ArrayLike, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None, order: int | None = None) -> Self:
+        # Runtime type validation
+        if not isinstance(x, ArrayLike):
+            raise TypeError(f"Expected arraylike input; got {x}")
+        if not isinstance(y, ArrayLike):
+            raise TypeError(f"Expected arraylike input; got {y}")
+        # Convert input to jax.Array
+        x = jnp.asarray(x)
+        y = jnp.asarray(y)
+
         n_boreholes = len(x)
         L = jnp.broadcast_to(L, n_boreholes)
         D = jnp.broadcast_to(D, n_boreholes)
@@ -92,7 +102,7 @@ class Borefield:
         return cls(boreholes)
 
     @classmethod
-    def rectangle_field(cls, N_1, N_2, B_1, B_2, L, D, r_b, basis, n_segments, segment_ratios=None, order=None):
+    def rectangle_field(cls, N_1: int, N_2: int, B_1: float, B_2: float, L: float, D: float, r_b: float, basis: Basis, n_segments: int, segment_ratios: ArrayLike | None = None, order: int | None = None) -> Self:
         # Borehole positions and orientation
         x = jnp.tile(jnp.arange(N_1), N_2) * B_1
         y = jnp.repeat(jnp.arange(N_2), N_1) * B_2

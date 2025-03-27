@@ -1,17 +1,27 @@
 # -*- coding: utf-8 -*-
 from functools import partial
 
-from jax import grad, jit, vmap
-from jax import numpy as jnp
-from jax.scipy.special import erfc
 import jax
+from jax import numpy as jnp
+from jax import Array, grad, jit, vmap
+from jax.typing import ArrayLike
+from jax.scipy.special import erfc
 import numpy as np
 from scipy.special import roots_legendre
 
 
 class Path:
 
-    def __init__(self, xi, p, order=None, s_order=None):
+    def __init__(self, xi: ArrayLike, p: ArrayLike, order: int | None = None, s_order: int | None = None):
+        # Runtime type validation
+        if not isinstance(xi, ArrayLike):
+            raise TypeError(f"Expected arraylike input; got {xi}")
+        if not isinstance(p, ArrayLike):
+            raise TypeError(f"Expected arraylike input; got {p}")
+        # Convert input to jax.Array
+        xi = jnp.asarray(xi)
+        p = jnp.atleast_2d(p)
+
         # --- Class atributes ---
         self.xi = xi
         self.p = p
@@ -64,10 +74,10 @@ class Path:
         )
 
     @partial(jit, static_argnames=['self'])
-    def point_heat_source(self, xi, p, time, alpha, r_min=0.):
+    def point_heat_source(self, xi: Array | float, p: Array, time: Array | float, alpha: float, r_min: float = 0.) -> Array | float:
         return self._point_heat_source(xi, p, time, alpha, r_min)
 
-    def _point_heat_source(self, xi, p, time, alpha, r_min):
+    def _point_heat_source(self, xi: Array | float, p: Array, time: Array | float, alpha: float, r_min: float) -> Array | float:
         if len(jnp.shape(time)) > 0:
             return vmap(
                 self._point_heat_source,

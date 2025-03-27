@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
+from collections.abc import Callable 
 from functools import partial
+from typing import Self, Tuple
 
-from jax import numpy as jnp
-from jax import jit, vmap
 import jax
+from jax import numpy as jnp
+from jax import Array, jit, vmap
+from jax.typing import ArrayLike
 import numpy as np
 from quadax import quadgk
 from scipy.special import roots_legendre
@@ -11,7 +14,13 @@ from scipy.special import roots_legendre
 
 class Basis:
 
-    def __init__(self, xi, order=101, order_nodes=21, w=None):
+    def __init__(self, xi: ArrayLike, order: int = 101, order_nodes: int = 21, w: ArrayLike | None = None):
+        # Runtime type validation
+        if not isinstance(xi, ArrayLike):
+            raise TypeError(f"Expected arraylike input; got {xi}")
+        # Convert input to jax.Array
+        xi = jnp.asarray(xi)
+
         # --- Class atributes ---
         self.xi = xi
         self.n_nodes = len(xi)
@@ -38,13 +47,13 @@ class Basis:
             w = self.f_psi(self._x_gl).T @ self._w_gl
         self.w = w
 
-    def _initialize_quad_methods(self, order, order_nodes):
+    def _initialize_quad_methods(self, order: int, order_nodes: int):
         self._x_gl, self._w_gl = self._gauss_legendre_rule(order)
         self._x_gl_nodes, self._w_gl_nodes, self._psi_gl_nodes = self._initialize_quad_nodes(*self._gauss_legendre_rule(order_nodes))
         self._x_ts, self._w_ts = self._tanh_sinh_rule(order)
         self._x_ts_nodes, self._w_ts_nodes, self._psi_ts_nodes = self._initialize_quad_nodes(*self._tanh_sinh_rule(order_nodes))
 
-    def _initialize_quad_nodes(self, x, w):
+    def _initialize_quad_nodes(self, x: ArrayLike, w: ArrayLike) -> Tuple[Array, Array, Array]:
         interval = jnp.concatenate([-jnp.ones(1), self.xi, jnp.ones(1)])
         low, high = interval[:-1], interval[1:]
         x_nodes = jnp.concatenate([0.5 * (b + a) + 0.5 * (b - a) * x for a, b in zip(low, high)])
@@ -52,37 +61,37 @@ class Basis:
         psi_nodes = self.f_psi(x_nodes)
         return x_nodes, w_nodes, psi_nodes
 
-    def _quad(self, fun, a, b, x, w):
-        x = 0.5 * (b + a) + 0.5 * (b - a) * jnp.array(x)
-        w = 0.5 * (b - a) * jnp.array(w)
+    def _quad(self, fun: Callable[[Array], Array], a: int, b: int, x: Array, w: Array) -> Array:
+        x = 0.5 * (b + a) + 0.5 * (b - a) * x
+        w = 0.5 * (b - a) * w
         psi = self.f_psi(x)
         return self._quad_psi(fun, x, w, psi)
 
-    def _quad_psi(self, fun, x, w, psi):
+    def _quad_psi(self, fun: Callable[[Array | float], Array | float], x: Array, w: Array, psi: Array) -> Array:
         integral = lambda _eta, _w, _psi: (fun(_eta) * _psi) @ _w
         return vmap(integral, in_axes=(None, None, 1), out_axes=-1)(x, w, psi)
 
-    def quad_gl(self, fun, a, b):
+    def quad_gl(self, fun: Callable[[Array | float], Array | float], a: int, b: int) -> Array:
         x, w = self._x_gl, self._w_gl
         return self._quad(fun, a, b, x, w)
 
-    def quad_gl_nodes(self, fun):
+    def quad_gl_nodes(self, fun: Callable[[Array | float], Array | float]) -> Array:
         x, w, psi = self._x_gl_nodes, self._w_gl_nodes, self._psi_gl_nodes
         return self._quad_psi(fun, x, w, psi)
 
-    def quad_ts_nodes(self, fun):
+    def quad_ts_nodes(self, fun: Callable[[Array | float], Array | float]) -> Array:
         x, w, psi = self._x_ts_nodes, self._w_ts_nodes, self._psi_ts_nodes
         return self._quad_psi(fun, x, w, psi)
 
     @staticmethod
-    def _gauss_legendre_rule(order):
+    def _gauss_legendre_rule(order: int) -> Tuple[Array, Array]:
         x, w = roots_legendre(order)
-        x = jnp.array(x)
-        w = jnp.array(w)
+        x = jnp.asarray(x)
+        w = jnp.asarray(w)
         return x, w
 
     @staticmethod
-    def _tanh_sinh_rule(order):
+    def _tanh_sinh_rule(order: int) -> Tuple[Array, Array]:
         one_minus_eps = jnp.array(1.0) - 10 * jnp.finfo(jnp.array(1.0).dtype).eps
         tanh_inverse = lambda x: 0.5 * jnp.log((1 + x) / (1 - x))
         sinh_inverse = lambda x: jnp.log(x + jnp.sqrt(x**2 + 1))
@@ -96,7 +105,7 @@ class Basis:
         return x, w
 
     @classmethod
-    def Legendre(cls, n_nodes, order=101, order_nodes=21):
+    def Legendre(cls, n_nodes: int, order: int = 101, order_nodes: int = 21) -> Self:
         xi, w = roots_legendre(n_nodes)
         xi = jnp.array(xi)
         w = jnp.array(w)

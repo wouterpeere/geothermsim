@@ -1,16 +1,26 @@
 # -*- coding: utf-8 -*-
-from functools import partial
-
-from jax import jit, vmap
-from jax import numpy as jnp
 import jax
+from jax import numpy as jnp
+from jax import Array, jit, vmap
+from jax.typing import ArrayLike
 
+from ..borefield.network import Network
 from .load_history_reconstruction import LoadHistoryReconstruction
 
 
 class gFunction:
 
-    def __init__(self, borefield, m_flow, cp_f, time, alpha, k_s, p=None):
+    def __init__(self, borefield: Network, m_flow: float, cp_f: float, time: ArrayLike, alpha: float, k_s: float, p: ArrayLike | None = None):
+        # Runtime type validation
+        if not isinstance(time, ArrayLike):
+            raise TypeError(f"Expected arraylike input; got {time}")
+        if not isinstance(p, ArrayLike) and p is not None:
+            raise TypeError(f"Expected arraylike or None input; got {p}")
+        # Convert input to jax.Array
+        time = jnp.asarray(time)
+        if p is not None:
+            p = jnp.asarray(p)
+
         self.borefield = borefield
         self.m_flow = m_flow
         self.cp_f = cp_f
