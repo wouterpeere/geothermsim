@@ -75,22 +75,19 @@ class Path:
 
     @partial(jit, static_argnames=['self'])
     def point_heat_source(self, xi: Array | float, p: Array, time: Array | float, alpha: float, r_min: float = 0.) -> Array | float:
-        return self._point_heat_source(xi, p, time, alpha, r_min)
-
-    def _point_heat_source(self, xi: Array | float, p: Array, time: Array | float, alpha: float, r_min: float) -> Array | float:
         if len(jnp.shape(time)) > 0:
             return vmap(
-                self._point_heat_source,
+                self.point_heat_source,
                 in_axes=(None, None, -1, None, None)
             )(xi, p, time, alpha, r_min)
         if len(jnp.shape(p)) > 1:
             return vmap(
-                self._point_heat_source,
+                self.point_heat_source,
                 in_axes=(None, -2, None, None, None)
             )(xi, p, time, alpha, r_min)
         if len(jnp.shape(xi)) > 0:
             return vmap(
-                self._point_heat_source,
+                self.point_heat_source,
                 in_axes=(-1, None, None, None, None)
             )(xi, p, time, alpha, r_min)
         # Current position of the point source
