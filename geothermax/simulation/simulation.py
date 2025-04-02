@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 from collections.abc import Callable
 
-import jax
 from jax import numpy as jnp
 from jax import Array, jit, vmap
+from jax.scipy.linalg import block_diag
 from jax.typing import ArrayLike
 
 from ..borefield.network import Network
@@ -11,6 +11,47 @@ from .load_aggregation import LoadAggregation
 
 
 class Simulation:
+    """Simulation.
+
+    Parameters
+    ----------
+    borefield: network
+        The borefield.
+    m_flow : float
+        Fluid mass flow rate (in kg/s).
+    dt : float
+        Time step (in seconds).
+    tmax : float
+        Maximum time of the simulation (in seconds).
+    T0 : float
+        Undisturbed ground temperature (in degree Celcius).
+    cp_f : float
+        Fluid specific isobaric heat capacity (in J/kg-K).
+    alpha : float
+        Ground thermal diffusivity (in m^2/s)
+    k_s : float
+        Ground thermal conductivity (in W/m-K).
+    cells_per_level : int, default: ``5``
+        Number of cells per aggregation level.
+    p : array_like or None, default: ``None``
+        (`n_points`, 3,) array of positions to evaluate the ground
+        temperature. If `p` is ``None``, the ground temperature is not
+        evaluated.
+
+    Attributes
+    ----------
+    n_times : int
+        Number of time steps.
+    q : array
+        The heat extraction rate at the nodes (in W/m).
+    T_b : array
+        The borehole wall temperature at the nodes (in degree Celsius).
+    T_f_in : array
+        The inlet fluid temperature (in degree Celsius).
+    T : array
+        The ground temperature (in degree Celsius) at positions `p`.
+
+    """
 
     def __init__(self, borefield: Network, m_flow: float, cp_f: float, dt: float, tmax: float, T0: float, alpha: float, k_s: float, cells_per_level: int = 5, p: ArrayLike | None = None):
         # Runtime type validation
@@ -42,18 +83,29 @@ class Simulation:
         self.initialize_systems_of_equations()
 
     def initialize_systems_of_equations(self):
+        """Initialize the system of equations.
+
+        """
         N = self.borefield.n_boreholes * self.borefield.n_nodes
         self.N = N
         self.h_to_self = self.loadAgg.h_to_self[0].reshape((N, N)) / (2 * jnp.pi * self.k_s)
         self.g_in, self.g_b = self.borefield.g_to_self(self.m_flow, self.cp_f)
         self.A = jnp.block(
             [[self.h_to_self, jnp.eye(N), jnp.zeros((N, 1))],
-             [-jnp.eye(N), jax.scipy.linalg.block_diag(*[self.g_b[i, :, :] for i in range(self.borefield.n_boreholes)]), self.g_in.reshape((-1, 1))],
+             [-jnp.eye(N), block_diag(*[self.g_b[i, :, :] for i in range(self.borefield.n_boreholes)]), self.g_in.reshape((-1, 1))],
              [self.borefield.w.flatten(), jnp.zeros((1, N + 1))]]
             )
         self.B = jnp.zeros(2 * N + 1)
 
-    def simulate(self, Q: Callable[[float], float], Q_small: float = 1e-3):
+    def simulate(self, Q: Callable[[float], float]):
+        """Evaluate the g-function.
+
+        Parameters
+        ----------
+        Q : callable
+            Total heat extraction rate (in watts) as a function of time
+            (in seconds).
+        """
         self.loadAgg.reset_history()
         time = 0.
         k = 0
@@ -79,4 +131,3 @@ class Simulation:
             if self.p is not None:
                 self.T = self.T.at[k].set(self.T0 - self.loadAgg.temperature_to_point())
             k += 1
-        return

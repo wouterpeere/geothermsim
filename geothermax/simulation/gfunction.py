@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-import jax
 from jax import numpy as jnp
 from jax import Array, jit, vmap
+from jax.scipy.linalg import block_diag
 from jax.typing import ArrayLike
 
 from ..borefield.network import Network
@@ -9,6 +9,41 @@ from .load_history_reconstruction import LoadHistoryReconstruction
 
 
 class gFunction:
+    """g-Function.
+
+    Parameters
+    ----------
+    borefield: network
+        The borefield.
+    m_flow : float
+        Fluid mass flow rate (in kg/s).
+    time : array_like
+        Times (in seconds) to evaluate the g-function.
+    cp_f : float
+        Fluid specific isobaric heat capacity (in J/kg-K).
+    alpha : float
+        Ground thermal diffusivity (in m^2/s)
+    k_s : float
+        Ground thermal conductivity (in W/m-K).
+    p : array_like or None, default: ``None``
+        (`n_points`, 3,) array of positions to evaluate the ground
+        temperature. If `p` is ``None``, the ground temperature is not
+        evaluated.
+
+    Attributes
+    ----------
+    g : array
+        The g-function of the borefield.
+    q : array
+        The heat extraction rate at the nodes (in W/m).
+    T_b : array
+        The borehole wall temperature at the nodes (in degree Celsius).
+    T_f_in : array
+        The inlet fluid temperature (in degree Celsius).
+    T : array
+        The ground temperature (in degree Celsius) at positions `p`.
+
+    """
 
     def __init__(self, borefield: Network, m_flow: float, cp_f: float, time: ArrayLike, alpha: float, k_s: float, p: ArrayLike | None = None):
         # Runtime type validation
@@ -41,19 +76,25 @@ class gFunction:
         self.initialize_systems_of_equations()
 
     def initialize_systems_of_equations(self):
+        """Initialize the system of equations.
+
+        """
         N = self.borefield.n_boreholes * self.borefield.n_nodes
         self.N = N
         self.h_to_self = jnp.concatenate((jnp.zeros((1, N, N)), self.loaHisRec.h_to_self.reshape((-1, N, N)) / (2 * jnp.pi * self.k_s)), axis=0)
         self.g_in, self.g_b = self.borefield.g_to_self(self.m_flow, self.cp_f)
         self.A = jnp.block(
             [[jnp.zeros((N, N)), -jnp.eye(N), jnp.zeros((N, 1))],
-             [jnp.eye(N), jax.scipy.linalg.block_diag(*[self.g_b[i, :, :] for i in range(self.borefield.n_boreholes)]), self.g_in.reshape((-1, 1))],
+             [jnp.eye(N), block_diag(*[self.g_b[i, :, :] for i in range(self.borefield.n_boreholes)]), self.g_in.reshape((-1, 1))],
              [self.borefield.w.flatten(), jnp.zeros((1, N + 1))]]
             )
         self.B = jnp.zeros(2 * N + 1)
         self.B = self.B.at[-1].set(2 * jnp.pi * self.k_s * self.borefield.L.sum())
 
     def simulate(self):
+        """Evaluate the g-function.
+
+        """
         self.loaHisRec.reset_history()
         self.q = jnp.zeros((self.n_times, self.borefield.n_boreholes, self.borefield.n_nodes))
         self.T_b = jnp.zeros((self.n_times, self.borefield.n_boreholes, self.borefield.n_nodes))
@@ -88,4 +129,3 @@ class gFunction:
         R_field = self.borefield.effective_borefield_thermal_resistance(self.m_flow, self.cp_f)
         # Effective borehole wall temperature
         self.g = T_f - 2 * jnp.pi * self.k_s * R_field
-        return

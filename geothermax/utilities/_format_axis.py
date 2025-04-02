@@ -8,6 +8,24 @@ from mpl_toolkits.mplot3d.axes3d import Axes3D
 
 
 def _format_axis(ax: Axes | Axes3D, axis_labels: List[str] | None = None, equal: bool = False, inverse_y: bool = False) -> Axes | Axes3D:
+    """Format an axis.
+
+    Parameters
+    ----------
+    ax : axes or axes_3d
+        Axis to be formatted.
+    axis_labels : list of str or None, default: ``None``
+        Axis labels.
+    equal : bool, default: ``False``
+        True to set use an equal aspect ratio.
+    inverse_y : bool, default: ``False``
+        True to invert the direction of the y axis.
+
+    Returns
+    -------
+    axes or axes_3d
+        The formatted axis.
+    """
     ax.tick_params(
         axis='both', which='both', direction='in',
         bottom=True, top=True, left=True, right=True)

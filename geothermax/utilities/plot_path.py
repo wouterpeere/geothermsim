@@ -3,16 +3,38 @@ from typing import List, Tuple
 
 from jax import numpy as jnp
 from matplotlib import pyplot as plt
-
-from ._format_axis import _format_axis
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d.axes3d import Axes3D
 
+from ._format_axis import _format_axis
 from ..path import Path
 
 
 def plot_path(path: Path | List[Path], num: int = 101, view: str = 'all', ax: Axes | Axes3D | None = None) -> Axes | Axes3D | Tuple[Figure, Axes] | Tuple[Figure, Axes3D] | Tuple[Figure, List[Axes | Axes3D]]:
+    """Plot path trajectory
+
+    Parameters
+    ----------
+    path : path or list of path
+        Path to be plotted.
+    num : int, default: 101
+        Number of points along the path.
+    view : {'all', 'xy', 'yz', 'xz', '3d'}, default: 'all'
+        The view to be plotted. 'all' plots all views on a 2 by 2
+        figure.
+    ax : axes, axes_3d or None, default: ``None``
+        The axis on which to draw the trajectories. Is `ax` is ``None``,
+        a new figure and new axes are created.
+
+    Returns
+    -------
+    fig : figure
+        The figure. Only return if `ax` is ``None``.
+    ax : axes, axes_3d or list
+        The axis.
+
+    """
     if view == 'xy' or view == 'yx':
         return _plot_xy(path, num=num, ax=ax)
     if view == 'yz' or view == 'zy':
@@ -37,6 +59,26 @@ def plot_path(path: Path | List[Path], num: int = 101, view: str = 'all', ax: Ax
 
 
 def _plot_xy(path: Path | List[Path], num: int = 101, ax: Axes | None = None) -> Axes | Tuple[Figure, Axes]:
+    """Plot xy view of path trajectory
+
+    Parameters
+    ----------
+    path : path or list of path
+        Path to be plotted.
+    num : int, default: 101
+        Number of points along the path.
+    ax : axes or None, default: ``None``
+        The axis on which to draw the trajectories. Is `ax` is ``None``,
+        a new figure and new axes are created.
+
+    Returns
+    -------
+    fig : figure
+        The figure. Only return if `ax` is ``None``.
+    ax : axes
+        The axis.
+
+    """
     ax_is_none = ax is None
     if ax is None:
         fig, ax = plt.subplots(layout='constrained')
@@ -63,6 +105,26 @@ def _plot_xy(path: Path | List[Path], num: int = 101, ax: Axes | None = None) ->
 
 
 def _plot_yz(path: Path | List[Path], num: int = 101, ax: Axes | None = None) -> Axes | Tuple[Figure, Axes]:
+    """Plot yz view of path trajectory
+
+    Parameters
+    ----------
+    path : path or list of path
+        Path to be plotted.
+    num : int, default: 101
+        Number of points along the path.
+    ax : axes or None, default: ``None``
+        The axis on which to draw the trajectories. Is `ax` is ``None``,
+        a new figure and new axes are created.
+
+    Returns
+    -------
+    fig : figure
+        The figure. Only return if `ax` is ``None``.
+    ax : axes
+        The axis.
+
+    """
     ax_is_none = ax is None
     if ax is None:
         fig, ax = plt.subplots(layout='constrained')
@@ -89,6 +151,26 @@ def _plot_yz(path: Path | List[Path], num: int = 101, ax: Axes | None = None) ->
 
 
 def _plot_xz(path: Path | List[Path], num: int = 101, ax: Axes | None = None) -> Axes | Tuple[Figure, Axes]:
+    """Plot xz view of path trajectory
+
+    Parameters
+    ----------
+    path : path or list of path
+        Path to be plotted.
+    num : int, default: 101
+        Number of points along the path.
+    ax : axes or None, default: ``None``
+        The axis on which to draw the trajectories. Is `ax` is ``None``,
+        a new figure and new axes are created.
+
+    Returns
+    -------
+    fig : figure
+        The figure. Only return if `ax` is ``None``.
+    ax : axes
+        The axis.
+
+    """
     ax_is_none = ax is None
     if ax is None:
         fig, ax = plt.subplots(layout='constrained')
@@ -115,6 +197,26 @@ def _plot_xz(path: Path | List[Path], num: int = 101, ax: Axes | None = None) ->
 
 
 def _plot_3d(path: Path | List[Path], num: int = 101, ax: Axes3D | None = None) -> Axes3D | Tuple[Figure, Axes3D]:
+    """Plot 3d view of path trajectory
+
+    Parameters
+    ----------
+    path : path or list of path
+        Path to be plotted.
+    num : int, default: 101
+        Number of points along the path.
+    ax : axes_3d or None, default: ``None``
+        The axis on which to draw the trajectories. Is `ax` is ``None``,
+        a new figure and new axes are created.
+
+    Returns
+    -------
+    fig : figure
+        The figure. Only return if `ax` is ``None``.
+    ax : axes_3d
+        The axis.
+
+    """
     ax_is_none = ax is None
     if ax is None:
         fig, ax = plt.subplots(subplot_kw={'projection': '3d'}, layout='constrained')

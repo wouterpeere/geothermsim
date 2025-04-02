@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from typing import List, Self
 
-import jax
 from jax import numpy as jnp
 from jax import Array, jit, vmap
 from jax.typing import ArrayLike
@@ -12,6 +11,40 @@ from ..path import Path
 
 
 class Borefield:
+    """Borefield.
+
+    Parameters
+    ----------
+    boreholes : list of borehole
+        Boreholes in the borefield.
+
+    Attributes
+    ----------
+    n_boreholes : int
+        Number of boreholes.
+    n_nodes : int
+        Number of nodes per borehole.
+    L : array
+        Borehole lengths (in meters).
+    xi : array
+        Coordinates of the nodes. They are the same for all boreholes.
+    p : array
+        (`n_boreholes`, `n_nodes`, 3,) array of node positions.
+    dp_dxi : array
+        (`n_boreholes`, `n_nodes`, 3,) array of the derivatives of the
+        position at the node coordinates.
+    J : array
+        (`n_boreholes`, `n_nodes`,) array of the norm of the Jacobian at
+        the node coordinates.
+    s : array
+        (`n_boreholes`, `n_nodes`,) array of the longitudinal position at
+        the node coordinates.
+    w : array
+        (`n_boreholes`, `n_nodes`,) array of quadrature weights at the
+        node coordinates. These quadrature weights take into account the
+        norm of the Jacobian.
+
+    """
 
     def __init__(self, boreholes: List[Borehole]):
         self.boreholes = boreholes
@@ -48,6 +81,21 @@ class Borefield:
         self.w = jnp.stack([borehole.w for borehole in self.boreholes], axis=0)
 
     def h_to_self(self, time: Array, alpha: float) -> Array:
+        """Thermal response factors to its own nodes.
+
+        Parameters
+        ----------
+        time : array
+            (K,) array of times (in seconds).
+        alpha : float
+            Ground thermal diffusivity (in m^2/s).
+
+        Returns
+        -------
+        array
+            (K, `n_boreholes`, `n_nodes`, `n_boreholes`, `n_nodes`,) array
+            of thermal response factors.
+        """
         n_boreholes = self.n_boreholes
         h_to_self = jnp.stack(
             [
@@ -63,6 +111,27 @@ class Borefield:
         return h_to_self
 
     def h_to_point(self, p: Array, time: Array, alpha: float, r_min: float = 0.) -> Array:
+        """Thermal response factors to a point.
+
+        Parameters
+        ----------
+        p : array
+            (M, 3,) array of the positions at which thermal response
+            factors are evaluated.
+        time : array
+            (K,) array of times (in seconds).
+        alpha : float
+            Ground thermal diffusivity (in m^2/s).
+        r_min : float, default: ``0.``
+            Minimum distance (in meters) added to the distance between the
+            heat source and the positions `p`.
+
+        Returns
+        -------
+        array
+            (K, M, `n_boreholes`, `n_nodes`,) array of thermal response
+            factors.
+        """
         n_boreholes = self.n_boreholes
         h_to_point = jnp.stack(
             [
@@ -72,7 +141,43 @@ class Borefield:
         return h_to_point
 
     @classmethod
-    def from_positions(cls, L: ArrayLike, D: ArrayLike, r_b: ArrayLike, x: ArrayLike, y: ArrayLike, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None, order: int | None = None) -> Self:
+    def from_positions(cls, L: ArrayLike, D: ArrayLike, r_b: ArrayLike, x: ArrayLike, y: ArrayLike, basis: Basis, n_segments: int, tilt: ArrayLike = 0., orientation: ArrayLike = 0., segment_ratios: ArrayLike | None = None) -> Self:
+        """Field of straight boreholes from their dimensions.
+
+        Parameters
+        ----------
+        L : array_like
+            Borehole length (in meters).
+        D : array_like
+            Borehole buried depth (in meters).
+        r_b : array_like
+            Borehole radius (in meters).
+        x, y : array_like
+            Horizontal position (in meters) of the top end of the
+            borehole.
+        basis : basis
+            Basis functions.
+        n_segments : int
+            Number of segments per borehole.
+        tilt : array_like, default: ``0.``
+            Tilt angle (in radians) of the boreholes with respect to
+            vertical.
+        orientation : array_like, default: ``0.``
+            Orientation (in radians) of the inclined boreholes. An
+            inclination toward the x-axis corresponds to an orientation
+            of zero.
+        segment_ratios : array_like or None, default: None
+            Normalized size of the segments. Should total ``1``
+            (i.e. ``sum(segment_ratios) = 1``). If `segment_ratios` is
+            ``None``, segments of equal size are considered (i.e.
+            ``segment_ratios[v] = 1 / n_segments``).
+
+        Returns
+        -------
+        borefield
+            Instance of the `Borefield` class.
+
+        """
         # Runtime type validation
         if not isinstance(x, ArrayLike):
             raise TypeError(f"Expected arraylike input; got {x}")
@@ -103,6 +208,36 @@ class Borefield:
 
     @classmethod
     def rectangle_field(cls, N_1: int, N_2: int, B_1: float, B_2: float, L: float, D: float, r_b: float, basis: Basis, n_segments: int, segment_ratios: ArrayLike | None = None, order: int | None = None) -> Self:
+        """Field of vertical boreholes in a rectangular configuration.
+
+        Parameters
+        ----------
+        N_1, N_2 : int
+            Number of columns and rows in the borefield.
+        B_1, B_2 : float
+            Spacing between columns and rows (in meters).
+        L : float
+            Borehole length (in meters).
+        D : float
+            Borehole buried depth (in meters).
+        r_b : float
+            Borehole radius (in meters).
+        basis : basis
+            Basis functions.
+        n_segments : int
+            Number of segments per borehole.
+        segment_ratios : array_like or None, default: None
+            Normalized size of the segments. Should total ``1``
+            (i.e. ``sum(segment_ratios) = 1``). If `segment_ratios` is
+            ``None``, segments of equal size are considered (i.e.
+            ``segment_ratios[v] = 1 / n_segments``).
+
+        Returns
+        -------
+        borefield
+            Instance of the `Borefield` class.
+
+        """
         # Borehole positions and orientation
         x = jnp.tile(jnp.arange(N_1), N_2) * B_1
         y = jnp.repeat(jnp.arange(N_2), N_1) * B_2

@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 from functools import partial
 
-import jax
 from jax import numpy as jnp
-from jax import Array, grad, jit, vmap
+from jax import Array, jacobian, jit, vmap
 from jax.typing import ArrayLike
 from jax.scipy.special import erfc
 import numpy as np
@@ -11,6 +10,33 @@ from scipy.special import roots_legendre
 
 
 class Path:
+    """Trajectory of a borehole.
+
+    Parameters
+    ----------
+    xi : array_like
+        (`n_nodes`,) array of node coordinates along the interval
+        ``[-1, 1]``.
+    p : array_like
+        Positions (``x``, ``y``, ``z``) of the nodes along the trajectory
+        of the borehole.
+    order : int or None, default: None
+        Order of the polynomial regression through positions `p` to
+        approximate the borehole trajectory. The first row of `p`, which
+        should correspond to the top positition of the borehole (i.e.
+        with ``xi[0]=-1``), is constrained in the polynomial regression.
+        If `order` is ``None``, then ``order=len(xi)``.
+    s_order : int or None, default: None
+        Order of the polynomial approximant of the longitudinal position
+        ``s`` along the borehole trajectory. If `s_order` is ``None``,
+        then ``s_order=2*len(xi)-1``.
+
+    Attributes
+    ----------
+    n_nodes : int
+        Number of nodes.
+
+    """
 
     def __init__(self, xi: ArrayLike, p: ArrayLike, order: int | None = None, s_order: int | None = None):
         # Runtime type validation
@@ -46,7 +72,7 @@ class Path:
             lambda _eta: vmap(f_p, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_p(_eta)
         )
         # Derivative of position (dp/dxi)
-        f_dp_dxi = lambda _eta: jax.jacobian(f_p)(_eta)
+        f_dp_dxi = lambda _eta: jacobian(f_p)(_eta)
         self.f_dp_dxi = jit(
             lambda _eta: vmap(f_dp_dxi, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_dp_dxi(_eta)
         )
@@ -75,6 +101,33 @@ class Path:
 
     @partial(jit, static_argnames=['self'])
     def point_heat_source(self, xi: Array | float, p: Array, time: Array | float, alpha: float, r_min: float = 0.) -> Array | float:
+        """Point heat source solution.
+
+        Parameters
+        ----------
+        xi : array or float
+            (N,) array of the coordinates of the point heat sources along
+            the trajectory.
+        p : array
+            (M, 3,) array of the positions at which the point heat source
+            solution is evaluated.
+        time : array or float
+            (K,) array of times (in seconds).
+        alpha : float
+            Ground thermal diffusivity (in m^2/s).
+        r_min : float, default: ``0.``
+            Minimum distance (in meters) between point heat sources and
+            positions `p`.
+
+        Returns
+        -------
+        array or float
+            (K, M, N,) array of values of the point heat source solution.
+            For each of the parameters `xi`, `p` and `time`, the
+            corresponding axis is removed if the parameter is supplied as
+            a ``float``.
+
+        """
         if len(jnp.shape(time)) > 0:
             return vmap(
                 self.point_heat_source,
