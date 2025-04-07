@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from time import perf_counter
+
 from jax import numpy as jnp
 from jax import Array, jit, vmap
 from jax.scipy.linalg import block_diag
@@ -57,6 +59,7 @@ class gFunction:
             p = jnp.asarray(p)
 
         self.borefield = borefield
+        self.n_nodes = self.borefield.n_boreholes * self.borefield.n_nodes
         self.m_flow = m_flow
         self.cp_f = cp_f
         self.time = time
@@ -79,49 +82,104 @@ class gFunction:
         """Initialize the system of equations.
 
         """
-        N = self.borefield.n_boreholes * self.borefield.n_nodes
-        self.N = N
-        self.h_to_self = jnp.concatenate((jnp.zeros((1, N, N)), self.loaHisRec.h_to_self.reshape((-1, N, N)) / (2 * jnp.pi * self.k_s)), axis=0)
+        N = self.n_nodes
+        self.h_to_self = jnp.concatenate(
+            (
+                jnp.zeros(
+                    (1,
+                     self.borefield.n_boreholes,
+                     self.borefield.n_nodes,
+                     self.borefield.n_boreholes,
+                     self.borefield.n_nodes)
+                ),
+                self.loaHisRec.h_to_self / (2 * jnp.pi * self.k_s)
+            ),
+            axis=0)
         self.g_in, self.g_b = self.borefield.g_to_self(self.m_flow, self.cp_f)
         self.A = jnp.block(
-            [[jnp.zeros((N, N)), -jnp.eye(N), jnp.zeros((N, 1))],
-             [jnp.eye(N), block_diag(*[self.g_b[i, :, :] for i in range(self.borefield.n_boreholes)]), self.g_in.reshape((-1, 1))],
-             [self.borefield.w.flatten(), jnp.zeros((1, N + 1))]]
+            [[jnp.eye(N), self.g_in.reshape((-1, 1))],
+             [self.borefield.w.flatten(), jnp.zeros((1, 1))]]
             )
-        self.B = jnp.zeros(2 * N + 1)
+        self.B = jnp.zeros(N + 1)
         self.B = self.B.at[-1].set(2 * jnp.pi * self.k_s * self.borefield.L.sum())
 
-    def simulate(self):
-        """Evaluate the g-function.
+    def update_system_of_equations(self, h_to_self: Array, T0: Array):
+        """Update the system of equations.
+
+        Parameters
+        ----------
+        h_to_self : array
+            Array of thermal response factors.
+        T0 : array
+            Borehole wall temperature at nodes assuming zero heat
+            extraction rate.
 
         """
+        N = self.n_nodes
+        self.A = self.A.at[:N, :N].set(jnp.eye(N) + jnp.einsum('iml,iljn->imjn', self.g_b, h_to_self).reshape((N, N)))
+        self.B = self.B.at[:N].set(vmap(jnp.dot, in_axes=(0, 0), out_axes=0)(-self.g_b, T0.reshape((self.borefield.n_boreholes, -1))).flatten())
+
+    def simulate(self, disp: bool = True, print_every: int = 10):
+        """Evaluate the g-function.
+
+        Parameters
+        ----------
+        disp : bool, default: ``True``
+            Set to ``True`` to print simulation progression messages.
+        print_every : int, default: ``10``
+            Period at which simulation progression messages are printed.
+
+        """
+        tic = perf_counter()
+        next_k = print_every
+        if disp:
+            print('Simulation start.')
+        N = self.n_nodes
+        h_shape = self.h_to_self.shape
         self.loaHisRec.reset_history()
+        # Initialize arrays
         self.q = jnp.zeros((self.n_times, self.borefield.n_boreholes, self.borefield.n_nodes))
         self.T_b = jnp.zeros((self.n_times, self.borefield.n_boreholes, self.borefield.n_nodes))
         self.T_f_in = jnp.zeros(self.n_times)
         if self.p is not None:
             self.T = jnp.zeros((self.n_times, self.n_points))
+
+        # Start simulation
         for k in range(len(self.time) - 1):
+            # Advance to next time step
             time = self.loaHisRec.next_time_step()
             dtime = self.time[k + 1] - self.time[k]
             h = vmap(
-                vmap(
-                    lambda _h: jnp.interp(dtime, self.time, _h),
-                    in_axes=-1,
-                    out_axes=-1),
+                lambda _h: jnp.interp(dtime, self.time, _h),
                 in_axes=-1,
                 out_axes=-1
-                )(self.h_to_self)
-            self.A = self.A.at[:self.N, :self.N].set(h)
-            T0 = -self.loaHisRec.temperature()
-            self.B = self.B.at[:self.N].set(T0.flatten())
+                )(
+                self.h_to_self.reshape((h_shape[0], -1))
+            ).reshape(h_shape[1:])
+            # Temporal and spatial superposition of past loads
+            T0 = self.loaHisRec.temperature() / (2 * jnp.pi * self.k_s)
+            # Build and solve system of equations
+            self.update_system_of_equations(h, T0)
             X = jnp.linalg.solve(self.A, self.B)
-            self.q = self.q.at[k].set(X[:self.N].reshape((self.borefield.n_boreholes, -1)))
-            self.T_b = self.T_b.at[k].set(X[self.N:2*self.N].reshape((self.borefield.n_boreholes, -1)))
+            q = X[:self.n_nodes].reshape((self.borefield.n_boreholes, -1))
+            T_b = T0 + jnp.tensordot(h, q, axes=([-2, -1], [-2, -1]))
+            # Apply latest heat extraction rates
+            self.loaHisRec.set_current_load(q)
+            # Store results
+            self.q = self.q.at[k].set(q)
+            self.T_b = self.T_b.at[k].set(T_b)
             self.T_f_in = self.T_f_in.at[k].set(X[-1])
-            self.loaHisRec.set_current_load(self.q[k] / (2 * jnp.pi * self.k_s))
+            # Evaluate ground temperatures
             if self.p is not None:
                 self.T = self.T.at[k].set(self.loaHisRec.temperature_to_point())
+            if k >= next_k:
+                next_k += print_every
+                toc = perf_counter()
+                if disp:
+                    print(
+                        f'Completed {k} of {self.n_times} time steps. '
+                        f'Elapsed time: {toc-tic:.2f} seconds.'
+                    )
         T_f_out = self.T_f_in - 2 * jnp.pi * self.k_s * self.borefield.L.sum() / (self.m_flow * self.cp_f)
         # Average fluid temperature
         T_f = 0.5 * (self.T_f_in + T_f_out)
@@ -129,3 +187,7 @@ class gFunction:
         R_field = self.borefield.effective_borefield_thermal_resistance(self.m_flow, self.cp_f)
         # Effective borehole wall temperature
         self.g = T_f - 2 * jnp.pi * self.k_s * R_field
+        if disp:
+            print(
+                f'Simulation end. Elapsed time: {toc-tic:.2f} seconds.'
+            )

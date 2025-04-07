@@ -99,15 +99,14 @@ class Simulation:
 
         """
         N = self.n_nodes
-        self.h_to_self = self.loadAgg.h_to_self[0].reshape((N, N)) / (2 * jnp.pi * self.k_s)
+        self.h_to_self = self.loadAgg.h_to_self[0] / (2 * jnp.pi * self.k_s)
         self.A = jnp.block(
-            [[self.h_to_self, jnp.eye(N), jnp.zeros((N, 1))],
-             [-jnp.eye(N), jnp.zeros((N, N)), jnp.zeros((N, 1))],
-             [self.borefield.w.flatten(), jnp.zeros((1, N + 1))]]
+            [[-jnp.eye(N), jnp.zeros((N, 1))],
+             [self.borefield.w.flatten(), jnp.zeros((1, 1))]]
             )
-        self.B = jnp.zeros(2 * N + 1)
+        self.B = jnp.zeros(N + 1)
 
-    def update_system_of_equations(self, m_flow: float, Q, T0):
+    def update_system_of_equations(self, m_flow: float, Q: float, T0: Array):
         """Update the system of equations.
 
         Parameters
@@ -116,16 +115,16 @@ class Simulation:
             Fluid mass flow rate (in kg/s).
         Q : float
             Total heat extraction rate (in watts).
-        T0 : float
+        T0 : array
             Borehole wall temperature at nodes (in degree Celsius)
             assuming zero heat extraction rate.
 
         """
         N = self.n_nodes
         self.g_in, self.g_b = self.borefield.g_to_self(m_flow, self.cp_f)
-        self.A = self.A.at[N:2*N, N:2*N].set(block_diag(*[self.g_b[i, :, :] for i in range(self.borefield.n_boreholes)]))
-        self.A = self.A.at[N:2*N, -1].set(self.g_in.flatten())
-        self.B = self.B.at[:N].set(T0.flatten())
+        self.A = self.A.at[:N, :N].set(-(jnp.eye(N) + jnp.einsum('iml,iljn->imjn', self.g_b, self.h_to_self).reshape((N, N))))
+        self.A = self.A.at[:N, -1].set(self.g_in.flatten())
+        self.B = self.B.at[:N].set(-vmap(jnp.dot, in_axes=(0, 0), out_axes=0)(self.g_b, T0.reshape((self.borefield.n_boreholes, -1))).flatten())
         self.B = self.B.at[-1].set(Q)
 
     def simulate(self, Q: ArrayLike, f_m_flow: Callable[[float], float], m_flow_small: float = 0.01, disp: bool = True, print_every: int = 100):
@@ -187,7 +186,7 @@ class Simulation:
                 X = jnp.linalg.solve(self.A, self.B)
                 # Store results
                 q = X[:self.n_nodes].reshape((self.borefield.n_boreholes, -1))
-                T_b = X[self.n_nodes:2*self.n_nodes].reshape((self.borefield.n_boreholes, -1))
+                T_b = T0 - jnp.tensordot(self.h_to_self, q, axes=([-2, -1], [-2, -1]))
                 T_f_in = X[-1]
                 self.T_f_in = self.T_f_in.at[k].set(T_f_in)
                 T_f_out = T_f_in + Q_k / (m_flow * self.cp_f)
