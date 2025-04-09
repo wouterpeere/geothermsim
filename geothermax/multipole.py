@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
+from functools import partial
+
 from jax import numpy as jnp
 from jax import Array, jit, vmap
+from jax.lax import fori_loop
 from jax.typing import ArrayLike
-import numpy as np
-from scipy.special import binom
+
+from .utilities import comb
 
 
 class Multipole:
@@ -28,120 +31,100 @@ class Multipole:
         self.n_pipes = len(r_p)
         self.sigma = (k_b - k_s) / (k_b + k_s)
         self.z = p[:, 0] + 1.j * p[:, 1]
+        self.zz = vmap(
+            jnp.multiply,
+            in_axes=(0, None),
+            out_axes=0
+            )(self.z.conj(), self.z)
+        self.dis = vmap(
+            jnp.add,
+            in_axes=(0, None),
+            out_axes=0
+            )(self.z, -self.z)
 
         self.factors()
         self.thermal_resistances_line_zero_beta = self._thermal_resistances_line_zero_beta()
-        self.thermal_resistances_multipole = np.stack(
-            [self._thermal_resistances_multipole(_j) for _j in np.arange(1, self.J + 1)],
+        self.thermal_resistances_multipole = jnp.stack(
+            [self._thermal_resistances_multipole(_j) for _j in jnp.arange(1, self.J + 1)],
             axis=-1
         )
 
     def factors(self):
-        k = np.arange(1, self.J + 1)
-        j = np.arange(1, self.J + 1)
-        self.factors_line = np.stack(
-            [self._factors_line(_k) for _k in k],
-            axis=1
-        )
-        self.factors_multipole = np.stack(
-            [
-                np.stack(
-                    [self._factors_multipole(_k, _j) for _k in k],
-                    axis=1
-                    )
-            for _j in j],
-            axis=-1
-        )
-        self.factors_conjugate_multipole = np.stack(
-            [
-                np.stack(
-                    [self._factors_conjugate_multipole(_k, _j) for _k in k],
-                    axis=1
-                    )
-            for _j in j],
-            axis=-1
-        )
-        # self.factors_line = vmap(
-        #     self._factors_line,
-        #     in_axes=0,
-        #     out_axes=1
-        # )(k)
-        # self.factors_multipole = vmap(
-        #     vmap(
-        #         self._factors_multipole,
-        #         in_axes=(0, None),
-        #         out_axes=1
-        #         ),
-        #     in_axes=(None, 0),
-        #     out_axes=-1
-        # )(k, j)
-        # self.factors_conjugate_multipole = vmap(
-        #     vmap(
-        #         self._factors_conjugate_multipole,
-        #         in_axes=(0, None),
-        #         out_axes=1
-        #         ),
-        #     in_axes=(None, 0),
-        #     out_axes=-1
-        # )(k, j)
+        k = jnp.arange(1, self.J + 1)
+        j = jnp.arange(1, self.J + 1)
+        self.factors_line = vmap(
+            self._factors_line,
+            in_axes=0,
+            out_axes=1
+        )(k)
+        self.factors_multipole = vmap(
+            vmap(
+                self._factors_multipole,
+                in_axes=(0, None),
+                out_axes=1
+                ),
+            in_axes=(None, 0),
+            out_axes=-1
+        )(k, j)
+        self.factors_conjugate_multipole = vmap(
+            vmap(
+                self._factors_conjugate_multipole,
+                in_axes=(0, None),
+                out_axes=1
+                ),
+            in_axes=(None, 0),
+            out_axes=-1
+        )(k, j)
 
+    @partial(jit, static_argnames=['self'])
     def fluid_temperatures(self, q, T_b, beta):
         a_q = self._thermal_resistances_line(beta)
         a_P = self.thermal_resistances_multipole
-        P = self.solve_direct(q, beta)
-        T_f = T_b + a_q @ q + np.real(np.tensordot(a_P, P))
+        P = self.solve(q, beta)
+        T_f = T_b + a_q @ q + jnp.tensordot(a_P, P).real
         return T_f
 
     def _fluid_temperatures_a_q(self, beta):
         return self.thermal_resistances_zero(beta)
 
-    def solve_direct(self, q, beta):
-        k = np.arange(1, self.J + 1)
-        coeffs = (1 + np.multiply.outer(beta, k)) / (1 - np.multiply.outer(beta, k))
+    @partial(jit, static_argnames=['self'])
+    def solve(self, q, beta):
+        k = jnp.arange(1, self.J + 1)
+        beta_k = vmap(
+            jnp.multiply,
+            in_axes=(0, None),
+            out_axes=0
+            )(beta, k)
+        coeffs = (1 + beta_k) / (1 - beta_k)
         B = (-self.factors_line @ q).flatten()
-        B = np.concatenate([B.real, B.imag])
+        B = jnp.concatenate([B.real, B.imag])
         N = self.n_pipes * self.J
         A = self.factors_multipole.reshape((N, N))
         C = self.factors_conjugate_multipole.reshape((N, N))
-        A = np.block(
+        A = jnp.block(
             [[A.real + C.real, -A.imag + C.imag],
              [A.imag + C.imag, A.real - C.real]]
             )
-        A = A + np.diag(np.concatenate([coeffs.flatten(), -coeffs.flatten()]))
-        P = np.linalg.solve(A, B)
+        A = A + jnp.diag(jnp.concatenate([coeffs.flatten(), -coeffs.flatten()]))
+        P = jnp.linalg.solve(A, B)
         P = (P[:N] + 1.j * P[N:]).reshape((self.n_pipes, self.J))
         return P
 
-    def solve_iterative(self, q, beta, tol=1e-6):
-        k = np.arange(1, self.J + 1)
-        coeffs = (1 - np.multiply.outer(beta, k)) / (1 + np.multiply.outer(beta, k))
-        P = -coeffs * (self.factors_line @ q)
-        diff_0 = np.max(np.abs(P))
-        diff = diff_0
-        while diff > tol * diff_0:
-            P_new = -coeffs * (
-                self.factors_line @ q
-                + np.tensordot(self.factors_multipole, P)
-                + np.tensordot(self.factors_conjugate_multipole, P.conj())
-                ).conj()
-            diff = np.max(np.abs(P_new - P))
-            P = P_new
-        return P
-
     def _thermal_resistances_line(self, beta):
-        R = self.thermal_resistances_line_zero_beta + np.diag(beta) / (2 * np.pi * self.k_b)
+        R = self.thermal_resistances_line_zero_beta + jnp.diag(beta) / (2 * jnp.pi * self.k_b)
         return R
 
     def _thermal_resistances_line_zero_beta(self):
         z = self.z
-        I = np.eye(self.n_pipes)
-        dis = np.abs(np.add.outer(z, -z))
-        R = 1 / (2 * np.pi * self.k_b) * (
-            np.log(self.r_b / ((1 - I) * dis + np.diag(self.r_p)))
-            + self.sigma * np.log(
+        zz = self.zz
+        I = jnp.eye(self.n_pipes)
+        absdis = jnp.abs(self.dis)
+        R = 1 / (2 * jnp.pi * self.k_b) * (
+            jnp.log(self.r_b / ((1 - I) * absdis + jnp.diag(self.r_p)))
+            + self.sigma * jnp.log(
                 self.r_b**2 / (
-                    (1 - I) * np.abs(self.r_b**2 - np.multiply.outer(z.conj(), z))
-                    + np.diag(self.r_b**2 - np.abs(z)**2)
+                    (1 - I) * jnp.abs(self.r_b**2 - zz)
+                    + jnp.diag(self.r_b**2 - jnp.abs(z)**2)
                 )
             )
         )
@@ -149,50 +132,56 @@ class Multipole:
 
     def _thermal_resistances_multipole(self, j):
         z = self.z
-        I = np.eye(self.n_pipes)
+        zz = self.zz
+        I = jnp.eye(self.n_pipes)
         numer_1 = (1 - I) * self.r_p**j
-        denom_1 = np.add.outer(z, -z)**j + I
-        numer_2 = np.multiply.outer(z.conj()**j, self.r_p**j)
-        denom_2 = (self.r_b**2 - np.multiply.outer(z.conj(), z))**j
+        denom_1 = self.dis**j + I
+        numer_2 = vmap(
+            jnp.multiply,
+            in_axes=(0, None),
+            out_axes=0
+            )(z.conj()**j, self.r_p**j)
+        denom_2 = (self.r_b**2 - zz)**j
         a_P = (numer_1 / denom_1 + self.sigma * numer_2 / denom_2)
         return a_P
 
     def _factors_line(self, k):
         z = self.z
-        I = np.eye(self.n_pipes)
-        denom_1 = (
-            (1 - I) * np.add.outer(-z, z) + I
-            )**k
-        numer_1 = (
-            ((1 - I) * self.r_p**k).T
-            )
-        denom_2 = (
-            self.r_b**2 - np.multiply.outer(z, z.conj())
-            )**k
-        numer_2 = (
-            self.sigma * np.multiply.outer(self.r_p**k, z.conj()**k)
-            )
-        a_q = (numer_1 / denom_1 + numer_2 / denom_2) / k / (2 * np.pi * self.k_b)
+        zz = self.zz
+        I = jnp.eye(self.n_pipes)
+        denom_1 = ((1 - I) * -self.dis + I)**k
+        numer_1 = ((1 - I) * self.r_p**k).T
+        denom_2 = (self.r_b**2 - zz.T)**k
+        numer_2 = self.sigma * vmap(
+            jnp.multiply,
+            in_axes=(0, None),
+            out_axes=0
+            )(self.r_p**k, z.conj()**k)
+        a_q = (numer_1 / denom_1 + numer_2 / denom_2) / k / (2 * jnp.pi * self.k_b)
         return a_q
 
     def _factors_multipole(self, k, j):
-        z = self.z
-        I = np.eye(self.n_pipes)
+        I = jnp.eye(self.n_pipes)
         numerator = vmap(
-            lambda _r: (-self.r_p)**k * _r**j,
-            in_axes=0,
-            out_axes=-1
-        )(self.r_p)
-        denominator = np.add.outer(z, -z)**(k + j) + I
-        a_P = (1 - I) * binom(k + j - 1, j - 1) * numerator / denominator
+            jnp.multiply,
+            in_axes=(0, None),
+            out_axes=0
+            )((-self.r_p)**k, self.r_p**j)
+        denominator = self.dis**(k + j) + I
+        a_P = (1 - I) * comb(k + j - 1, j - 1) * numerator / denominator
         return a_P
 
     def _factors_conjugate_multipole(self, k, j):
-        j_p_max = np.minimum(k, j)
+        j_p_max = jnp.minimum(k, j)
         z = self.z
-        a_P_conj = np.zeros((self.n_pipes, self.n_pipes))
-        for j_p in range(j_p_max + 1):
-            numerator = np.multiply.outer(self.r_p**k * z**(j - j_p), self.r_p**j * z.conj()**(k - j_p))
-            denominator = (self.r_b**2 - np.multiply.outer(z, z.conj()))**(k + j - j_p)
-            a_P_conj = a_P_conj + self.sigma * binom(j, j_p) * binom(k + j - j_p - 1, j - 1) * numerator / denominator
+        a_P_conj = jnp.zeros((self.n_pipes, self.n_pipes), dtype=complex)
+        def body_fun(i, val):
+            numerator = vmap(
+                jnp.multiply,
+                in_axes=(0, None),
+                out_axes=0
+                )(self.r_p**k * z**(j - i), self.r_p**j * z.conj()**(k - i))
+            denominator = (self.r_b**2 - self.zz.T)**(k + j - i)
+            return val + self.sigma * comb(j, i) * comb(k + j - i - 1, j - 1) * numerator / denominator
+        a_P_conj = fori_loop(0, j_p_max + 1, body_fun, a_P_conj)
         return a_P_conj

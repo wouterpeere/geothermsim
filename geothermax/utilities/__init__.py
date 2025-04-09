@@ -1,4 +1,5 @@
 from ._format_axis import _format_axis
+from .comb import comb
 from .plot_basis import plot_basis
 from .plot_path import plot_path
 from .plot_borehole import plot_borehole
