@@ -1,0 +1,144 @@
+# -*- coding: utf-8 -*-
+from functools import partial
+
+from jax import numpy as jnp
+
+from .darcy_friction_factor import darcy_friction_factor
+from .reynolds_number import reynolds_number_circular_pipe
+
+
+def convective_heat_transfer_coefficient_circular_pipe(m_flow: float, r_p: float, mu_f: float, rho_f: float, k_f: float, cp_f: float, epsilon: float) -> float:
+    """Convective heat transfer coefficient in circular pipe.
+
+    Parameters
+    ----------
+    m_flow : float
+        Fluid mass flow rate (in kg/s).
+    r_p : float
+        Inner radius of the pipe (in meters).
+    mu_f : float
+        Fluid dynamic viscosity (in kg/m-s).
+    rho_f : float
+        Fluid density (in kg/m3).
+    k_f : float
+        Fluid thermal conductivity (in W/m-K).
+    cp_f : float
+        Fluid isobaric specific heat capacity (in J/kg-K).
+    epsilon : float
+        Pipe surface roughness (in meters).
+
+    Returns
+    -------
+    float
+        Convective heat transfer coefficient (in W/m2-K).
+    
+    """
+    # Reynolds number
+    Re = reynolds_number_circular_pipe(m_flow, r_p, mu_f, rho_f)
+    # Prandtl number
+    Pr = cp_f * mu_f / k_f
+    # Darcy friction factor
+    D = 2 * r_p
+    E = epsilon / D
+    f_darcy = darcy_friction_factor(Re, E)
+    # Nusselt number
+    Nu = nusselt_number_circular_pipe(Re, Pr, f_darcy)
+    # Convective heat transfer coefficient
+    h_fluid = k_f * Nu / D
+    return h_fluid
+
+
+def nusselt_number_circular_pipe(Re: float, Pr: float, f_darcy: float) -> float:
+    """Nusselt number in circular pipe.
+
+    Parameters
+    ----------
+    Re : float
+        Reynolds number.
+    Pr : float
+        Prandtl number.
+    f_darcy : float
+        Darcy friction factor.
+
+    Returns
+    -------
+    float
+        Nusselt number.
+
+    """
+    Re_crit_lower = 2300.
+    Re_crit_upper = 4000.
+    # Condition on the flow regime
+    condlist = [Re <= Re_crit_lower, Re >= Re_crit_upper]
+    # Nusselt number for laminar flow
+    Nu_laminar = 3.66
+    # Nusselt number for turbulent flow
+    _nusselt_number_turbulent_flow = partial(
+        nusselt_number_turbulent_flow,
+        Pr=Pr,
+        f_darcy=f_darcy)
+    # Nusselt number at the onset of turbulent flow
+    Nu_crit_upper = nusselt_number_turbulent_flow(
+        Re_crit_upper, Pr, f_darcy)
+    # Nusselt number in transition regime
+    _nusselt_number_transition = partial(
+        nusselt_number_transition,
+        Re_crit_lower=Re_crit_lower,
+        Re_crit_upper=Re_crit_upper,
+        Nu_crit_lower=Nu_laminar,
+        Nu_crit_upper=Nu_crit_upper)
+    # Piecewise evaluation of Nusselt number
+    funclist = [Nu_laminar, _nusselt_number_turbulent_flow, _nusselt_number_transition]
+    Nu = jnp.piecewise(jnp.float32(Re), condlist, funclist)
+    return Nu
+
+
+def nusselt_number_transition(Re: float, Re_crit_lower: float, Re_crit_upper: float, Nu_crit_lower: float, Nu_crit_upper: float) -> float:
+    """Nusselt number for turbulent flow in any pipe.
+
+    Parameters
+    ----------
+    Re : float
+        Reynolds number.
+    Re_crit_lower : float
+        Reynolds number at the lower limit of the transition regime.
+    Re_crit_upper : float
+        Reynolds number at the upper limit of the transition regime.
+    Nu_crit_lower : float
+        Nusselt number at the lower limit of the transition regime.
+    Nu_crit_upper : float
+        Nusselt number at the upper limit of the transition regime.
+
+    Returns
+    -------
+    float
+        Nusselt number.
+
+    """
+    gamma = (Re - Re_crit_lower) / (Re_crit_upper - Re_crit_lower)
+    Nu = (1 - gamma) * Nu_crit_lower + gamma * Nu_crit_upper
+    return Nu
+
+
+def nusselt_number_turbulent_flow(Re: float, Pr: float, f_darcy: float) -> float:
+    """Nusselt number for turbulent flow in any pipe.
+
+    Parameters
+    ----------
+    Re : float
+        Reynolds number.
+    Pr : float
+        Prandtl number.
+    f_darcy : float
+        Darcy friction factor.
+
+    Returns
+    -------
+    float
+        Nusselt number.
+
+    """
+    Nu = 0.125 * f_darcy * (Re - 1.0e3) * Pr / (
+        1 + 12.7 * jnp.sqrt(0.125 * f_darcy) * (Pr**(2 / 3) - 1)
+    )
+    return Nu

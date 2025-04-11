@@ -6,7 +6,7 @@ from jax import Array, jit, vmap
 from jax.lax import fori_loop
 from jax.typing import ArrayLike
 
-from .utilities import comb
+from ..utilities import comb
 
 
 class Multipole:
