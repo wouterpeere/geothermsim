@@ -64,9 +64,9 @@ class UTubeHeatExchanger:
         if not isinstance(p, ArrayLike):
             raise TypeError(f"Expected arraylike input; got {p}")
         # Convert input to jax.Array
-        r_p_in = jnp.asarray(r_p_in)
-        r_p_out = jnp.asarray(r_p_out)
         p = jnp.atleast_2d(p)
+        r_p_in = jnp.broadcast_to(r_p_in, p.shape[0])
+        r_p_out = jnp.broadcast_to(r_p_out, p.shape[0])
 
         # --- Class atributes ---
         # Parameters

@@ -188,6 +188,7 @@ class gFunction:
         # Effective borehole wall temperature
         self.g = T_f - 2 * jnp.pi * self.k_s * R_field
         if disp:
+            toc = perf_counter()
             print(
                 f'Simulation end. Elapsed time: {toc-tic:.2f} seconds.'
             )
