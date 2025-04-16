@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from collections.abc import Callable
 from functools import partial
 from typing import Self, Tuple
 
@@ -16,8 +17,10 @@ class SingleUTube(Borehole):
 
     Parameters
     ----------
-    R_d : array_like
-        (2, 2,) array of thermal resistances (in m-K/W).
+    R_d : array_like or callable
+        (2, 2,) array of thermal resistances (in m-K/W), or callable that
+        takes the mass flow rate as input (in kg/s) and returns a (2, 2,)
+        array.
     r_b : float
         Borehole radius (in meters).
     path : path
@@ -61,12 +64,18 @@ class SingleUTube(Borehole):
 
     """
 
-    def __init__(self, R_d: ArrayLike, r_b: float, path: Path, basis: Basis, n_segments: int, segment_ratios: ArrayLike | None = None):
+    def __init__(self, R_d: ArrayLike | Callable[[float], Array], r_b: float, path: Path, basis: Basis, n_segments: int, segment_ratios: ArrayLike | None = None):
         # Runtime type validation
-        if not isinstance(R_d, ArrayLike):
-            raise TypeError(f"Expected arraylike input; got {R_d}")
+        if not isinstance(R_d, ArrayLike) and not callable(R_d):
+            raise TypeError(f"Expected arraylike or callable input; got {R_d}")
         # Convert input to jax.Array
-        R_d = jnp.atleast_2d(R_d)
+        if isinstance(R_d, ArrayLike):
+            R_d = jnp.atleast_2d(R_d)
+            def thermal_resistances(m_flow: float) -> Array:
+                return R_d
+            self.thermal_resistances = thermal_resistances
+        else:
+            self.thermal_resistances = R_d
 
         super().__init__(r_b, path, basis, n_segments, segment_ratios=segment_ratios)
         self.R_d = R_d
@@ -88,8 +97,9 @@ class SingleUTube(Borehole):
             Effective borehole thermal resistance (in m-K/W).
 
         """
-        a = self._outlet_fluid_temperature_a_in(m_flow, cp_f)
-        b = self._heat_extraction_rate_a_in(self.xi, m_flow, cp_f) @ self.w
+        beta_ij = self._beta_ij(m_flow, cp_f)
+        a = self._outlet_fluid_temperature_a_in(beta_ij)
+        b = self._heat_extraction_rate_a_in(self.xi, m_flow, cp_f, beta_ij) @ self.w
         # Effective borehole thermal resistance
         R_b = -0.5 * self.L * (1. + a) / b
         return R_b
@@ -270,21 +280,20 @@ class SingleUTube(Borehole):
             temperature.
 
         """
-        a_in = self._fluid_temperature_a_in(xi, m_flow, cp_f)
-        a_b = self._fluid_temperature_a_b(xi, m_flow, cp_f)
+        beta_ij = self._beta_ij(m_flow, cp_f)
+        a_in = self._fluid_temperature_a_in(xi, beta_ij)
+        a_b = self._fluid_temperature_a_b(xi, beta_ij)
         return a_in, a_b
 
-    def _fluid_temperature_a_in(self, xi: Array | float, m_flow: float, cp_f: float) -> Array:
+    def _fluid_temperature_a_in(self, xi: Array | float, beta_ij: Array) -> Array:
         """Inlet coefficient to evaluate the fluid temperatures.
 
         Parameters
         ----------
         xi : array or float
             (M,) array of coordinates along the borehole.
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
@@ -292,23 +301,21 @@ class SingleUTube(Borehole):
             (M, 2,) array of coefficients for the inlet fluid temperature.
 
         """
-        b_in = self._outlet_fluid_temperature_a_in(m_flow, cp_f)
-        c_in = self._general_solution_a_in(xi, m_flow, cp_f)
-        c_out = self._general_solution_a_out(xi, m_flow, cp_f)
+        b_in = self._outlet_fluid_temperature_a_in(beta_ij)
+        c_in = self._general_solution_a_in(xi, beta_ij)
+        c_out = self._general_solution_a_out(xi, beta_ij)
         a_in = c_in + b_in * c_out
         return a_in
 
-    def _fluid_temperature_a_b(self, xi: Array | float, m_flow: float, cp_f: float) -> Array:
+    def _fluid_temperature_a_b(self, xi: Array | float, beta_ij: Array) -> Array:
         """Borehole wall coefficient to evaluate the fluid temperatures.
 
         Parameters
         ----------
         xi : array or float
             (M,) array of coordinates along the borehole.
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
@@ -317,9 +324,9 @@ class SingleUTube(Borehole):
             temperature.
 
         """
-        b_b = self._outlet_fluid_temperature_a_b(m_flow, cp_f)
-        c_out = self._general_solution_a_out(xi, m_flow, cp_f)
-        c_b = self._general_solution_a_b(xi, m_flow, cp_f)
+        b_b = self._outlet_fluid_temperature_a_b(beta_ij)
+        c_out = self._general_solution_a_out(xi, beta_ij)
+        c_b = self._general_solution_a_b(xi, beta_ij)
         a_b = c_b + vmap(jnp.outer, in_axes=(0, None))(c_out, b_b)
         return a_b
 
@@ -347,22 +354,21 @@ class SingleUTube(Borehole):
             temperature.
 
         """
-        a_in = self._general_solution_a_in(xi, m_flow, cp_f)
-        a_out = self._general_solution_a_out(xi, m_flow, cp_f)
-        a_b = self._general_solution_a_b(xi, m_flow, cp_f)
+        beta_ij = self._beta_ij(m_flow, cp_f)
+        a_in = self._general_solution_a_in(xi, beta_ij)
+        a_out = self._general_solution_a_out(xi, beta_ij)
+        a_b = self._general_solution_a_b(xi, beta_ij)
         return a_in, a_out, a_b
 
-    def _general_solution_a_in(self, xi: Array | float, m_flow: float, cp_f: float) -> Array:
+    def _general_solution_a_in(self, xi: Array | float, beta_ij: Array) -> Array:
         """Inlet coefficient to evaluate the general solution.
 
         Parameters
         ----------
         xi : array or float
             (M,) array of coordinates along the borehole.
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
@@ -373,24 +379,22 @@ class SingleUTube(Borehole):
         s = self.path.f_s(xi)
         a_in = jnp.stack(
             (
-                self._f1(s, m_flow, cp_f),
-                -self._f2(s, m_flow, cp_f)
+                self._f1(s, beta_ij),
+                -self._f2(s, beta_ij)
             ),
             axis=-1
         )
         return a_in
 
-    def _general_solution_a_out(self, xi: Array | float, m_flow: float, cp_f: float) -> Array:
+    def _general_solution_a_out(self, xi: Array | float, beta_ij: Array) -> Array:
         """Outlet coefficient to evaluate the general solution.
 
         Parameters
         ----------
         xi : array or float
             (M,) array of coordinates along the borehole.
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
@@ -402,24 +406,22 @@ class SingleUTube(Borehole):
         s = self.path.f_s(xi)
         a_out = jnp.stack(
             (
-                self._f2(s, m_flow, cp_f),
-                self._f3(s, m_flow, cp_f)
+                self._f2(s, beta_ij),
+                self._f3(s, beta_ij)
             ),
             axis=-1
         )
         return a_out
 
-    def _general_solution_a_b(self, xi: Array | float, m_flow: float, cp_f: float) -> Array:
+    def _general_solution_a_b(self, xi: Array | float, beta_ij: Array) -> Array:
         """Borehole wall coefficient to evaluate the general solution.
 
         Parameters
         ----------
         xi : array or float
             (M,) array of coordinates along the borehole.
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
@@ -431,12 +433,12 @@ class SingleUTube(Borehole):
         if len(jnp.shape(xi)) == 1:
             a_b = vmap(
                 self._general_solution_a_b,
-                in_axes=(0, None, None)
-            )(xi, m_flow, cp_f)
+                in_axes=(0, None)
+            )(xi, beta_ij)
         else:
             s = self.path.f_s(xi)
-            f1 = lambda _eta: self._f4(s - self.path.f_s(_eta), m_flow, cp_f) * self.path.f_J(_eta)
-            f2 = lambda _eta: -self._f5(s - self.path.f_s(_eta), m_flow, cp_f) * self.path.f_J(_eta)
+            f1 = lambda _eta: self._f4(s - self.path.f_s(_eta), beta_ij) * self.path.f_J(_eta)
+            f2 = lambda _eta: -self._f5(s - self.path.f_s(_eta), beta_ij) * self.path.f_J(_eta)
             high = jnp.maximum(-1., jnp.minimum(1., self.f_xi_bs(xi)))
             a, b = self.xi_edges[:-1], self.xi_edges[1:]
             f_xi_bs = lambda _eta, _a, _b: 0.5 * (_b + _a) + 0.5 * _eta * (_b - _a)
@@ -483,11 +485,12 @@ class SingleUTube(Borehole):
             temperature.
 
         """
-        a_in = self._heat_extraction_rate_a_in(xi, m_flow, cp_f)
-        a_b = self._heat_extraction_rate_a_b(xi, m_flow, cp_f)
+        beta_ij = self._beta_ij(m_flow, cp_f)
+        a_in = self._heat_extraction_rate_a_in(xi, m_flow, cp_f, beta_ij)
+        a_b = self._heat_extraction_rate_a_b(xi, m_flow, cp_f, beta_ij)
         return a_in, a_b
 
-    def _heat_extraction_rate_a_in(self, xi: Array | float, m_flow: float, cp_f: float) -> Array | float:
+    def _heat_extraction_rate_a_in(self, xi: Array | float, m_flow: float, cp_f: float, beta_ij: Array) -> Array | float:
         """Inlet coefficient to evaluate the heat extraction rate.
 
         Parameters
@@ -498,6 +501,8 @@ class SingleUTube(Borehole):
             Fluid mass flow rate (in kg/s).
         cp_f : float
             Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
@@ -505,11 +510,12 @@ class SingleUTube(Borehole):
             (M,) array of coefficients for the inlet fluid temperature.
 
         """
-        b_in = self._fluid_temperature_a_in(xi, m_flow, cp_f)
-        a_in = -(b_in[:, 0] / self.R_d[0, 0] + b_in[:, 1] / self.R_d[1, 1])
+        b_in = self._fluid_temperature_a_in(xi, beta_ij)
+        R_d = 1 / (m_flow * cp_f * beta_ij)
+        a_in = -(b_in[:, 0] / R_d[0, 0] + b_in[:, 1] / R_d[1, 1])
         return a_in
 
-    def _heat_extraction_rate_a_b(self, xi: Array | float, m_flow: float, cp_f: float) -> Array:
+    def _heat_extraction_rate_a_b(self, xi: Array | float, m_flow: float, cp_f: float, beta_ij: Array) -> Array:
         """Borehole wall coefficient to evaluate the heat extraction rate.
 
         Parameters
@@ -520,6 +526,8 @@ class SingleUTube(Borehole):
             Fluid mass flow rate (in kg/s).
         cp_f : float
             Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
@@ -528,9 +536,10 @@ class SingleUTube(Borehole):
             temperature.
 
         """
-        b_b = self._fluid_temperature_a_b(xi, m_flow, cp_f)
-        R_b = self.R_d[0, 0] * self.R_d[1, 1] / (self.R_d[0, 0] + self.R_d[1, 1])
-        a_b = -(b_b[:, 0, :] / self.R_d[0, 0] + b_b[:, 1, :] / self.R_d[1, 1]) + vmap(self.f_psi, in_axes=0)(xi) / R_b
+        b_b = self._fluid_temperature_a_b(xi, beta_ij)
+        R_d = 1 / (m_flow * cp_f * beta_ij)
+        R_b = R_d[0, 0] * R_d[1, 1] / (R_d[0, 0] + R_d[1, 1])
+        a_b = -(b_b[:, 0, :] / R_d[0, 0] + b_b[:, 1, :] / R_d[1, 1]) + vmap(self.f_psi, in_axes=0)(xi) / R_b
         return a_b
 
     def _outlet_fluid_temperature(self, m_flow: float, cp_f: float) -> Tuple[float, Array]:
@@ -552,19 +561,18 @@ class SingleUTube(Borehole):
             temperature.
 
         """
-        a_in = self._outlet_fluid_temperature_a_in(m_flow, cp_f)
-        a_b = self._outlet_fluid_temperature_a_b(m_flow, cp_f)
+        beta_ij = self._beta_ij(m_flow, cp_f)
+        a_in = self._outlet_fluid_temperature_a_in(beta_ij)
+        a_b = self._outlet_fluid_temperature_a_b(beta_ij)
         return a_in, a_b
 
-    def _outlet_fluid_temperature_a_in(self, m_flow: float, cp_f: float) -> float:
+    def _outlet_fluid_temperature_a_in(self, beta_ij: Array) -> float:
         """Inlet coefficient to evaluate the outlet fluid temperature.
 
         Parameters
         ----------
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
@@ -573,18 +581,16 @@ class SingleUTube(Borehole):
 
         """
         L = self.L
-        a_in = (self._f1(L, m_flow, cp_f) + self._f2(L, m_flow, cp_f)) / (self._f3(L, m_flow, cp_f) - self._f2(L, m_flow, cp_f))
+        a_in = (self._f1(L, beta_ij) + self._f2(L, beta_ij)) / (self._f3(L, beta_ij) - self._f2(L, beta_ij))
         return a_in
 
-    def _outlet_fluid_temperature_a_b(self, m_flow: float, cp_f: float) -> Array:
+    def _outlet_fluid_temperature_a_b(self, beta_ij: Array) -> Array:
         """Borehole coefficient to evaluate the outlet fluid temperature.
 
         Parameters
         ----------
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
@@ -596,19 +602,19 @@ class SingleUTube(Borehole):
         L = self.L
         f = vmap(
             lambda _eta: (
-                self._f4(L - self.path.f_s(self.f_xi_sb(_eta)), m_flow, cp_f)
-                + self._f5(L - self.path.f_s(self.f_xi_sb(_eta)), m_flow, cp_f)
+                self._f4(L - self.path.f_s(self.f_xi_sb(_eta)), beta_ij)
+                + self._f5(L - self.path.f_s(self.f_xi_sb(_eta)), beta_ij)
             ) / (
-                self._f3(L, m_flow, cp_f)
-                - self._f2(L, m_flow, cp_f)
+                self._f3(L, beta_ij)
+                - self._f2(L, beta_ij)
             ) * self.path.f_J(self.f_xi_sb(_eta)) * self.segment_ratios,
             in_axes=0,
             out_axes=-1)
         a_b = self.basis.quad_gl(f, -1, 1.).flatten()
         return a_b
 
-    def _beta1(self, m_flow: float, cp_f: float) -> float:
-        """Pipe 1 to wall thermal conductance coefficient.
+    def _beta_ij(self, m_flow: float, cp_f: float) -> Array:
+        """Thermal conductance coefficients.
 
         Parameters
         ----------
@@ -619,119 +625,78 @@ class SingleUTube(Borehole):
 
         Returns
         -------
-        float
+        array
+            (2, 2,) array of thermal conductance coefficients.
 
         """
-        return 1. / (m_flow * cp_f * self.R_d[0, 0])
+        return 1. / (m_flow * cp_f * self.thermal_resistances(m_flow))
 
-    def _beta2(self, m_flow: float, cp_f: float) -> float:
-        """Pipe 2 to wall thermal conductance coefficient.
-
-        Parameters
-        ----------
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
-
-        Returns
-        -------
-        float
-
-        """
-        return 1. / (m_flow * cp_f * self.R_d[1, 1])
-
-    def _beta12(self, m_flow: float, cp_f: float) -> float:
-        """Pipe to pipe thermal conductance coefficient.
-
-        Parameters
-        ----------
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
-
-        Returns
-        -------
-        float
-
-        """
-        return 1. / (m_flow * cp_f * self.R_d[0, 1])
-
-    def _beta(self, m_flow: float, cp_f: float) -> float:
+    def _beta(self, beta_ij: Array) -> float:
         """Coefficient ``beta`` from Hellström (1991).
 
         Parameters
         ----------
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
         float
 
         """
-        beta1 = self._beta1(m_flow, cp_f)
-        beta2 = self._beta2(m_flow, cp_f)
+        beta1 = beta_ij[0, 0]
+        beta2 = beta_ij[1, 1]
         beta = 0.5 * (beta2 - beta1)
         return beta
 
-    def _gamma(self, m_flow: float, cp_f: float) -> float:
+    def _gamma(self, beta_ij: Array) -> float:
         """Coefficient ``gamma`` from Hellström (1991).
 
         Parameters
         ----------
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
         float
 
         """
-        beta1 = self._beta1(m_flow, cp_f)
-        beta2 = self._beta2(m_flow, cp_f)
-        beta12 = self._beta12(m_flow, cp_f)
+        beta1 = beta_ij[0, 0]
+        beta2 = beta_ij[1, 1]
+        beta12 = beta_ij[0, 1]
         gamma = jnp.sqrt(0.25 * (beta1 + beta2)**2 + beta12 * (beta1 + beta2))
         return gamma
 
-    def _delta(self, m_flow: float, cp_f: float) -> float:
+    def _delta(self, beta_ij: Array) -> float:
         """Coefficient ``delta`` from Hellström (1991).
 
         Parameters
         ----------
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
         float
 
         """
-        beta1 = self._beta1(m_flow, cp_f)
-        beta2 = self._beta2(m_flow, cp_f)
-        beta12 = self._beta12(m_flow, cp_f)
-        gamma = self._gamma(m_flow, cp_f)
+        beta1 = beta_ij[0, 0]
+        beta2 = beta_ij[1, 1]
+        beta12 = beta_ij[0, 1]
+        gamma = self._gamma(beta_ij)
         delta = 1. / gamma * (beta12 + 0.5 * (beta1 + beta2))
         return delta
 
-    def _f1(self, s: Array | float, m_flow: float, cp_f: float) -> Array | float:
+    def _f1(self, s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f1`` from Hellström (1991).
 
         Parameters
         ----------
         s : array or float
             (M,) array of longitudinal positions (in meters).
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
@@ -739,23 +704,21 @@ class SingleUTube(Borehole):
             (M,) array.
 
         """
-        beta = self._beta(m_flow, cp_f)
-        gamma = self._gamma(m_flow, cp_f)
-        delta = self._delta(m_flow, cp_f)
+        beta = self._beta(beta_ij)
+        gamma = self._gamma(beta_ij)
+        delta = self._delta(beta_ij)
         f1 = jnp.exp(beta * s) * (jnp.cosh(gamma * s) - delta * jnp.sinh(gamma * s))
         return f1
 
-    def _f2(self, s: Array | float, m_flow: float, cp_f: float) -> Array | float:
+    def _f2(self, s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f2`` from Hellström (1991).
 
         Parameters
         ----------
         s : array or float
             (M,) array of longitudinal positions (in meters).
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
@@ -763,23 +726,21 @@ class SingleUTube(Borehole):
             (M,) array.
 
         """
-        beta = self._beta(m_flow, cp_f)
-        gamma = self._gamma(m_flow, cp_f)
-        beta12 = self._beta12(m_flow, cp_f)
+        beta = self._beta(beta_ij)
+        gamma = self._gamma(beta_ij)
+        beta12 = beta_ij[0, 1]
         f2 = jnp.exp(beta * s) * beta12 / gamma * jnp.sinh(gamma * s)
         return f2
 
-    def _f3(self, s: Array | float, m_flow: float, cp_f: float) -> Array | float:
+    def _f3(self, s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f3`` from Hellström (1991).
 
         Parameters
         ----------
         s : array or float
             (M,) array of longitudinal positions (in meters).
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
@@ -787,23 +748,21 @@ class SingleUTube(Borehole):
             (M,) array.
 
         """
-        beta = self._beta(m_flow, cp_f)
-        gamma = self._gamma(m_flow, cp_f)
-        delta = self._delta(m_flow, cp_f)
+        beta = self._beta(beta_ij)
+        gamma = self._gamma(beta_ij)
+        delta = self._delta(beta_ij)
         f3 = jnp.exp(beta * s) * (jnp.cosh(gamma * s) + delta * jnp.sinh(gamma * s))
         return f3
 
-    def _f4(self, s: Array | float, m_flow: float, cp_f: float) -> Array | float:
+    def _f4(self, s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f4`` from Hellström (1991).
 
         Parameters
         ----------
         s : array or float
             (M,) array of longitudinal positions (in meters).
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
@@ -811,26 +770,24 @@ class SingleUTube(Borehole):
             (M,) array.
 
         """
-        beta1 = self._beta1(m_flow, cp_f)
-        beta2 = self._beta2(m_flow, cp_f)
-        beta12 = self._beta12(m_flow, cp_f)
-        beta = self._beta(m_flow, cp_f)
-        gamma = self._gamma(m_flow, cp_f)
-        delta = self._delta(m_flow, cp_f)
+        beta1 = beta_ij[0, 0]
+        beta2 = beta_ij[1, 1]
+        beta12 = beta_ij[0, 1]
+        beta = self._beta(beta_ij)
+        gamma = self._gamma(beta_ij)
+        delta = self._delta(beta_ij)
         f4 = jnp.exp(beta * s) * (beta1 * jnp.cosh(gamma * s) - (delta * beta1 + beta2 * beta12 / gamma) * jnp.sinh(gamma * s))
         return f4
 
-    def _f5(self, s: Array | float, m_flow: float, cp_f: float) -> Array | float:
+    def _f5(self, s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f5`` from Hellström (1991).
 
         Parameters
         ----------
         s : array or float
             (M,) array of longitudinal positions (in meters).
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
@@ -838,23 +795,25 @@ class SingleUTube(Borehole):
             (M,) array.
 
         """
-        beta1 = self._beta1(m_flow, cp_f)
-        beta2 = self._beta2(m_flow, cp_f)
-        beta12 = self._beta12(m_flow, cp_f)
-        beta = self._beta(m_flow, cp_f)
-        gamma = self._gamma(m_flow, cp_f)
-        delta = self._delta(m_flow, cp_f)
+        beta1 = beta_ij[0, 0]
+        beta2 = beta_ij[1, 1]
+        beta12 = beta_ij[0, 1]
+        beta = self._beta(beta_ij)
+        gamma = self._gamma(beta_ij)
+        delta = self._delta(beta_ij)
         f5 = jnp.exp(beta * s) * (beta2 * jnp.cosh(gamma * s) + (delta * beta2 + beta1 * beta12 / gamma) * jnp.sinh(gamma * s))
         return f5
 
     @classmethod
-    def from_dimensions(cls, R_d: ArrayLike, L: float, D: float, r_b: float, x: float, y: float, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None, order: int | None = None) -> Self:
+    def from_dimensions(cls, R_d: ArrayLike | Callable[[float], Array], L: float, D: float, r_b: float, x: float, y: float, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None, order: int | None = None) -> Self:
         """Straight borehole from its dimensions.
 
         Parameters
         ----------
-        R_d : array_like
-            (2, 2,) array of thermal resistances (in m-K/W).
+        R_d : array_like or callable
+            (2, 2,) array of thermal resistances (in m-K/W), or callable
+            that takes the mass flow rate as input (in kg/s) and returns a
+            (2, 2,) array.
         L : float
             Borehole length (in meters).
         D : float
