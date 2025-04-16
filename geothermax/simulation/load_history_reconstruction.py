@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from time import perf_counter
+
 from jax import numpy as jnp
 from jax import Array, jit, vmap
 from jax.typing import ArrayLike
@@ -23,6 +25,8 @@ class LoadHistoryReconstruction(_TemporalSuperposition):
         (`n_points`, 3,) array of positions to evaluate the ground
         temperature. If `p` is ``None``, the ground temperature is not
         evaluated.
+    disp : bool, default: ``True``
+        Set to ``True`` to print initialization progression messages.
 
     Attributes
     ----------
@@ -39,7 +43,8 @@ class LoadHistoryReconstruction(_TemporalSuperposition):
 
     """
 
-    def __init__(self, borefield: Borefield | Network, time: ArrayLike, alpha: float, p: ArrayLike | None = None):
+    def __init__(self, borefield: Borefield | Network, time: ArrayLike, alpha: float, p: ArrayLike | None = None, disp: bool = True):
+        tic = perf_counter()
         # Runtime type validation
         if not isinstance(time, ArrayLike):
             raise TypeError(f"Expected arraylike input; got {time}")
@@ -59,13 +64,32 @@ class LoadHistoryReconstruction(_TemporalSuperposition):
         self.q_reconstructed = jnp.zeros((0, borefield.n_boreholes, borefield.n_nodes))
         self._time = 0.
         self._k = -1
+        if disp:
+            print('Initialization start.')
         self.h_to_self = borefield.h_to_self(self.time, alpha)
+        if disp:
+            toc = perf_counter()
+            print(
+                f'Completed thermal response factors to nodes. '
+                f'Elapsed time: {toc-tic:.2f} seconds.'
+                    )
         if p is not None:
             self.n_points = p.shape[0]
             self.h_to_point = borefield.h_to_point(p, self.time, alpha)
+            if disp:
+                toc = perf_counter()
+                print(
+                    f'Completed thermal response factors to ground. '
+                    f'Elapsed time: {toc-tic:.2f} seconds.'
+                        )
         else:
             self.n_points = 0
             self.h_to_point = jnp.zeros((0, borefield.n_boreholes, borefield.n_nodes))
+        if disp:
+            toc = perf_counter()
+            print(
+                f'Initialization end. Elapsed time: {toc-tic:.2f} seconds.'
+            )
 
     def next_time_step(self) -> float:
         """Advance to next simulation time step.

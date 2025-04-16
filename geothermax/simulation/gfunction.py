@@ -31,6 +31,8 @@ class gFunction:
         (`n_points`, 3,) array of positions to evaluate the ground
         temperature. If `p` is ``None``, the ground temperature is not
         evaluated.
+    disp : bool, default: ``True``
+        Set to ``True`` to print initialization progression messages.
 
     Attributes
     ----------
@@ -47,7 +49,7 @@ class gFunction:
 
     """
 
-    def __init__(self, borefield: Network, m_flow: float, cp_f: float, time: ArrayLike, alpha: float, k_s: float, p: ArrayLike | None = None):
+    def __init__(self, borefield: Network, m_flow: float, cp_f: float, time: ArrayLike, alpha: float, k_s: float, p: ArrayLike | None = None, disp: bool = True):
         # Runtime type validation
         if not isinstance(time, ArrayLike):
             raise TypeError(f"Expected arraylike input; got {time}")
@@ -75,7 +77,7 @@ class gFunction:
             self.n_points = p.shape[0]
 
         self.loaHisRec = LoadHistoryReconstruction(
-            borefield, time, alpha, p=p)
+            borefield, time, alpha, p=p, disp=disp)
         self.initialize_systems_of_equations()
 
     def initialize_systems_of_equations(self):
