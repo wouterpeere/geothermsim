@@ -60,7 +60,7 @@ class Simulation:
     T : array
         The ground temperature (in degree Celsius) at positions `p`.
     m_flow : float
-        Fluid mass flow rate (in kg/s).
+        Total fluid mass flow rate (in kg/s).
 
     """
 
@@ -106,13 +106,14 @@ class Simulation:
             )
         self.B = jnp.zeros(N + 1)
 
-    def update_system_of_equations(self, m_flow: float, Q: float, T0: Array):
+    def update_system_of_equations(self, m_flow: float | Array, Q: float, T0: Array):
         """Update the system of equations.
 
         Parameters
         ----------
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
+        m_flow : float or array
+            Total fluid mass flow rate (in kg/s), or (`n_boreholes`,)
+            array of fluid mass flow rate per borehole.
         Q : float
             Total heat extraction rate (in watts).
         T0 : array
@@ -127,7 +128,7 @@ class Simulation:
         self.B = self.B.at[:N].set(-vmap(jnp.dot, in_axes=(0, 0), out_axes=0)(self.g_b, T0.reshape((self.borefield.n_boreholes, -1))).flatten())
         self.B = self.B.at[-1].set(Q)
 
-    def simulate(self, Q: ArrayLike, f_m_flow: Callable[[float], float], m_flow_small: float = 0.01, disp: bool = True, print_every: int = 100):
+    def simulate(self, Q: ArrayLike, f_m_flow: Callable[[float], float | Array], m_flow_small: float = 0.01, disp: bool = True, print_every: int = 100):
         """Simulate the borefield.
 
         Parameters
@@ -138,11 +139,14 @@ class Simulation:
             cover the length of the simulation.
         f_m_flow : callable
             Function that takes the total heat extraction rate (in watts)
-            as an input and returns the fluid mas flow rate (in kg/s).
+            as an input and returns the total fluid mas flow rate
+            (in kg/s) or an array of fluid mass flow rate per borehole.
         m_flow_small : float, default: ``0.01``
             The minimum fluid mass flow rate (in kg/s). If `f_m_flow`
-            returns a smaller value, the fluid mass flow rate and the heat
-            extraction rate are set to zero.
+            returns a smaller total value, the fluid mass flow rate and
+            the heat extraction rate are set to zero. If the total value
+            is above `m_flow_small`, the minimum fluid mas flow rate per
+            borehole is set to `m_flow_small`.
         disp : bool, default: ``True``
             Set to ``True`` to print simulation progression messages.
         print_every : int, default: ``100``
@@ -178,18 +182,25 @@ class Simulation:
             Q_k = next(Q_cycle)
             self.Q = self.Q.at[k].set(Q_k)
             m_flow = f_m_flow(Q_k)
-            self.m_flow = self.m_flow.at[k].set(m_flow)
-            # Only solve if the fluid mass flow rate is not zero
-            if m_flow > m_flow_small:
+            if len(jnp.shape(m_flow)) == 0:
+                m_flow_network = m_flow
+            else:
+                m_flow_network = m_flow.sum()
+            self.m_flow = self.m_flow.at[k].set(m_flow_network)
+            # Only solve if the total fluid mass flow rate is not zero
+            if m_flow_network > m_flow_small:
                 # Build and solve system of equations
-                self.update_system_of_equations(m_flow, Q_k, T0)
+                self.update_system_of_equations(
+                    jnp.maximum(m_flow, m_flow_small),
+                    Q_k,
+                    T0)
                 X = jnp.linalg.solve(self.A, self.B)
                 # Store results
                 q = X[:self.n_nodes].reshape((self.borefield.n_boreholes, -1))
                 T_b = T0 - jnp.tensordot(self.h_to_self, q, axes=([-2, -1], [-2, -1]))
                 T_f_in = X[-1]
                 self.T_f_in = self.T_f_in.at[k].set(T_f_in)
-                T_f_out = T_f_in + Q_k / (m_flow * self.cp_f)
+                T_f_out = T_f_in + Q_k / (m_flow_network * self.cp_f)
                 self.T_f_out = self.T_f_out.at[k].set(T_f_out)
                 # Apply latest heat extraction rates
                 self.loadAgg.set_current_load(q)

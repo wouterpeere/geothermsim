@@ -53,13 +53,14 @@ class Network(Borefield):
         super().__init__(boreholes)
 
     @partial(jit, static_argnames=['self'])
-    def effective_borefield_thermal_resistance(self, m_flow: float, cp_f: float) -> float:
+    def effective_borefield_thermal_resistance(self, m_flow: float | Array, cp_f: float) -> float:
         """Effective borefield thermal resistance.
 
         Parameters
         ----------
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
+        m_flow : float or array
+            Total fluid mass flow rate (in kg/s), or (`n_boreholes`,)
+            array of fluid mass flow rate per borehole.
         cp_f : float
             Fluid specific isobaric heat capacity (in J/kg-K).
 
@@ -69,22 +70,28 @@ class Network(Borefield):
             Effective borefield thermal resistance (in m-K/W).
 
         """
-        a = self._outlet_fluid_temperature(m_flow, cp_f)[0].mean()
+        a = jnp.average(
+            self._outlet_fluid_temperature(m_flow, cp_f)[0],
+            weights=jnp.broadcast_to(
+                m_flow, self.n_boreholes
+            )
+        )
         b = jnp.sum(self._heat_extraction_rate(self.xi, m_flow, cp_f)[0] * self.w)
         # Effective borehole thermal resistance
         R_field = -0.5 * self.L.sum() * (1. + a) / b
         return R_field
 
     @partial(jit, static_argnames=['self'])
-    def g(self, xi: Array | float, m_flow: float, cp_f: float) -> Array:
+    def g(self, xi: Array | float, m_flow: float | Array, cp_f: float) -> Array:
         """Coefficients to evaluate the heat extraction rate.
 
         Parameters
         ----------
         xi : array or float
             (M,) array of coordinates along the boreholes.
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
+        m_flow : float or array
+            Total fluid mass flow rate (in kg/s), or (`n_boreholes`,)
+            array of fluid mass flow rate per borehole.
         cp_f : float
             Fluid specific isobaric heat capacity (in J/kg-K).
 
@@ -101,13 +108,14 @@ class Network(Borefield):
         return self._heat_extraction_rate(xi, m_flow, cp_f)
 
     @partial(jit, static_argnames=['self'])
-    def g_to_self(self, m_flow: float, cp_f: float) -> Array:
+    def g_to_self(self, m_flow: float | Array, cp_f: float) -> Array:
         """Coefficients to evaluate the heat extraction rate at nodes.
 
         Parameters
         ----------
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
+        m_flow : float or array
+            Total fluid mass flow rate (in kg/s), or (`n_boreholes`,)
+            array of fluid mass flow rate per borehole.
         cp_f : float
             Fluid specific isobaric heat capacity (in J/kg-K).
 
@@ -124,7 +132,7 @@ class Network(Borefield):
         return self._heat_extraction_rate(self.xi, m_flow, cp_f)
 
     @partial(jit, static_argnames=['self'])
-    def fluid_temperature(self, xi: Array | float, T_f_in: float, T_b: Array, m_flow: float, cp_f: float) -> Array:
+    def fluid_temperature(self, xi: Array | float, T_f_in: float, T_b: Array, m_flow: float | Array, cp_f: float) -> Array:
         """Fluid temperatures.
 
         Parameters
@@ -136,8 +144,9 @@ class Network(Borefield):
         T_b : array
             (`n_boreholes`, `n_nodes`,) array of borehole wall
             temperatures (in degree Celsius).
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
+        m_flow : float or array
+            Total fluid mass flow rate (in kg/s), or (`n_boreholes`,)
+            array of fluid mass flow rate per borehole.
         cp_f : float
             Fluid specific isobaric heat capacity (in J/kg-K).
 
@@ -153,7 +162,7 @@ class Network(Borefield):
         return T_f
 
     @partial(jit, static_argnames=['self'])
-    def heat_extraction_rate(self, xi: Array | float, T_f_in: float, T_b: Array, m_flow: float, cp_f: float) -> Array:
+    def heat_extraction_rate(self, xi: Array | float, T_f_in: float, T_b: Array, m_flow: float | Array, cp_f: float) -> Array:
         """Heat extraction rate.
 
         Parameters
@@ -165,8 +174,9 @@ class Network(Borefield):
         T_b : array
             (`n_boreholes`, `n_nodes`,) array of borehole wall
             temperatures (in degree Celsius).
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
+        m_flow : float or array
+            Total fluid mass flow rate (in kg/s), or (`n_boreholes`,)
+            array of fluid mass flow rate per borehole.
         cp_f : float
             Fluid specific isobaric heat capacity (in J/kg-K).
 
@@ -182,7 +192,7 @@ class Network(Borefield):
         return q
 
     @partial(jit, static_argnames=['self'])
-    def heat_extraction_rate_to_self(self, T_f_in: float, T_b: Array, m_flow: float, cp_f: float) -> Array:
+    def heat_extraction_rate_to_self(self, T_f_in: float, T_b: Array, m_flow: float | Array, cp_f: float) -> Array:
         """Heat extraction rate at nodes.
 
         Parameters
@@ -192,8 +202,9 @@ class Network(Borefield):
         T_b : array
             (`n_boreholes`, `n_nodes`,) array of borehole wall
             temperatures (in degree Celsius).
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
+        m_flow : float or array
+            Total fluid mass flow rate (in kg/s), or (`n_boreholes`,)
+            array of fluid mass flow rate per borehole.
         cp_f : float
             Fluid specific isobaric heat capacity (in J/kg-K).
 
@@ -207,7 +218,7 @@ class Network(Borefield):
         return self.heat_extraction_rate(self.xi, T_f_in, T_b, m_flow, cp_f)
 
     @partial(jit, static_argnames=['self'])
-    def outlet_fluid_temperature(self, T_f_in: float, T_b: Array, m_flow: float, cp_f: float) -> Array:
+    def outlet_fluid_temperature(self, T_f_in: float, T_b: Array, m_flow: float | Array, cp_f: float) -> Array:
         """Outlet fluid temperatures.
 
         Parameters
@@ -217,8 +228,9 @@ class Network(Borefield):
         T_b : array
             (`n_boreholes, `n_nodes`,) array of borehole wall temperatures
             (in degree Celsius).
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
+        m_flow : float or array
+            Total fluid mass flow rate (in kg/s), or (`n_boreholes`,)
+            array of fluid mass flow rate per borehole.
         cp_f : float
             Fluid specific isobaric heat capacity (in J/kg-K).
 
@@ -233,15 +245,16 @@ class Network(Borefield):
         T_f_out = a_in * T_f_in + vmap(jnp.dot, in_axes=(0, 0), out_axes=0)(a_b, T_b)
         return T_f_out
 
-    def _fluid_temperature(self, xi: Array | float, m_flow: float, cp_f: float) -> Tuple[Array, Array]:
+    def _fluid_temperature(self, xi: Array | float, m_flow: float | Array, cp_f: float) -> Tuple[Array, Array]:
         """Coefficients to evaluate the fluid temperatures.
 
         Parameters
         ----------
         xi : array or float
             (M,) array of coordinates along the boreholes.
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
+        m_flow : float or array
+            Total fluid mass flow rate (in kg/s), or (`n_boreholes`,)
+            array of fluid mass flow rate per borehole.
         cp_f : float
             Fluid specific isobaric heat capacity (in J/kg-K).
 
@@ -255,23 +268,29 @@ class Network(Borefield):
             the borehole wall temperature.
 
         """
+        if len(jnp.shape(m_flow)) == 0 or jnp.shape(m_flow)[0] == 1:
+            m_flow = jnp.broadcast_to(
+                m_flow / self.n_boreholes,
+                self.n_boreholes
+            )
         a_in, a_b = zip(*[
-            borehole._fluid_temperature(xi, m_flow_borehole, cp_f)
-            for borehole in self.boreholes
+            borehole._fluid_temperature(xi, _m_flow, cp_f)
+            for borehole, _m_flow in zip(self.boreholes, m_flow)
         ])
         a_in = jnp.stack(a_in, axis=0)
         a_b = jnp.stack(a_b, axis=0)
         return a_in, a_b
 
-    def _heat_extraction_rate(self, xi: Array | float, m_flow: float, cp_f: float) -> Tuple[Array, Array]:
+    def _heat_extraction_rate(self, xi: Array | float, m_flow: float | Array, cp_f: float) -> Tuple[Array, Array]:
         """Coefficients to evaluate the heat extraction rate.
 
         Parameters
         ----------
         xi : array or float
             (M,) array of coordinates along the boreholes.
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
+        m_flow : float or array
+            Total fluid mass flow rate (in kg/s), or (`n_boreholes`,)
+            array of fluid mass flow rate per borehole.
         cp_f : float
             Fluid specific isobaric heat capacity (in J/kg-K).
 
@@ -285,22 +304,27 @@ class Network(Borefield):
             borehole wall temperature.
 
         """
-        m_flow_borehole = m_flow / self.n_boreholes
+        if len(jnp.shape(m_flow)) == 0 or jnp.shape(m_flow)[0] == 1:
+            m_flow = jnp.broadcast_to(
+                m_flow / self.n_boreholes,
+                self.n_boreholes
+            )
         a_in, a_b = zip(*[
-            borehole._heat_extraction_rate(xi, m_flow_borehole, cp_f)
-            for borehole in self.boreholes
+            borehole._heat_extraction_rate(xi, _m_flow, cp_f)
+            for borehole, _m_flow in zip(self.boreholes, m_flow)
         ])
         a_in = jnp.stack(a_in, axis=0)
         a_b = jnp.stack(a_b, axis=0)
         return a_in, a_b
 
-    def _outlet_fluid_temperature(self, m_flow: float, cp_f: float) -> Tuple[Array, Array]:
+    def _outlet_fluid_temperature(self, m_flow: float | Array, cp_f: float) -> Tuple[Array, Array]:
         """Coefficients to evaluate the outlet fluid temperatures.
 
         Parameters
         ----------
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
+        m_flow : float or array
+            Total fluid mass flow rate (in kg/s), or (`n_boreholes`,)
+            array of fluid mass flow rate per borehole.
         cp_f : float
             Fluid specific isobaric heat capacity (in J/kg-K).
 
@@ -314,10 +338,14 @@ class Network(Borefield):
             borehole wall temperature.
 
         """
-        m_flow_borehole = m_flow / self.n_boreholes
+        if len(jnp.shape(m_flow)) == 0 or jnp.shape(m_flow)[0] == 1:
+            m_flow = jnp.broadcast_to(
+                m_flow / self.n_boreholes,
+                self.n_boreholes
+            )
         a_in, a_b = zip(*[
-            borehole._outlet_fluid_temperature(m_flow_borehole, cp_f)
-            for borehole in self.boreholes
+            borehole._outlet_fluid_temperature(_m_flow, cp_f)
+            for borehole, _m_flow in zip(self.boreholes, m_flow)
         ])
         a_in = jnp.stack(a_in, axis=0)
         a_b = jnp.stack(a_b, axis=0)

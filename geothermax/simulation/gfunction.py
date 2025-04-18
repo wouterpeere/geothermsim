@@ -17,8 +17,9 @@ class gFunction:
     ----------
     borefield: network
         The borefield.
-    m_flow : float
-        Fluid mass flow rate (in kg/s).
+    m_flow : float or array
+        Total fluid mass flow rate (in kg/s), or (`n_boreholes`,) array of
+        fluid mass flow rate per borehole.
     time : array_like
         Times (in seconds) to evaluate the g-function.
     cp_f : float
@@ -49,7 +50,7 @@ class gFunction:
 
     """
 
-    def __init__(self, borefield: Network, m_flow: float, cp_f: float, time: ArrayLike, alpha: float, k_s: float, p: ArrayLike | None = None, disp: bool = True):
+    def __init__(self, borefield: Network, m_flow: float | Array, cp_f: float, time: ArrayLike, alpha: float, k_s: float, p: ArrayLike | None = None, disp: bool = True):
         # Runtime type validation
         if not isinstance(time, ArrayLike):
             raise TypeError(f"Expected arraylike input; got {time}")
@@ -75,6 +76,11 @@ class gFunction:
             self.n_points = 0
         else:
             self.n_points = p.shape[0]
+
+        if len(jnp.shape(m_flow)) == 0:
+            self.m_flow_network = m_flow
+        else:
+            self.m_flow_network = m_flow.sum()
 
         self.loaHisRec = LoadHistoryReconstruction(
             borefield, time, alpha, p=p, disp=disp)
@@ -182,7 +188,7 @@ class gFunction:
                         f'Completed {k} of {self.n_times} time steps. '
                         f'Elapsed time: {toc-tic:.2f} seconds.'
                     )
-        T_f_out = self.T_f_in - 2 * jnp.pi * self.k_s * self.borefield.L.sum() / (self.m_flow * self.cp_f)
+        T_f_out = self.T_f_in - 2 * jnp.pi * self.k_s * self.borefield.L.sum() / (self.m_flow_network * self.cp_f)
         # Average fluid temperature
         T_f = 0.5 * (self.T_f_in + T_f_out)
         # Borefield thermal resistance
