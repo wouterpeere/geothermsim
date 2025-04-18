@@ -510,7 +510,7 @@ class _Tube(Borehole, ABC):
         """
         b_b = self._fluid_temperature_a_b(xi, beta_ij)
         R_d = 1 / (m_flow * cp_f * beta_ij)
-        R_b = R_d[0, 0] * R_d[1, 1] / (R_d[0, 0] + R_d[1, 1])
+        R_b = 1 / (1 / jnp.diag(R_d)).sum()
         a_b = -(b_b / jnp.diag(R_d)[:, None]).sum(axis=1) + vmap(self.f_psi, in_axes=0)(xi) / R_b
         return a_b
 
