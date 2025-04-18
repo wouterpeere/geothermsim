@@ -170,32 +170,6 @@ class SingleUTube(_Tube):
                 )(a, b, self.segment_ratios, high).reshape(2, self.n_nodes)
         return a_b
 
-    def _heat_extraction_rate(self, xi: Array | float, m_flow: float, cp_f: float) -> Tuple[Array | float, Array]:
-        """Coefficients to evaluate the heat extraction rate.
-
-        Parameters
-        ----------
-        xi : array or float
-            (M,) array of coordinates along the borehole.
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
-
-        Returns
-        -------
-        a_in : array or float
-            (M,) array of coefficients for the inlet fluid temperature.
-        a_b : array
-            (M, `n_nodes`,) array of coefficients for the borehole wall
-            temperature.
-
-        """
-        beta_ij = self._beta_ij(m_flow, cp_f)
-        a_in = self._heat_extraction_rate_a_in(xi, m_flow, cp_f, beta_ij)
-        a_b = self._heat_extraction_rate_a_b(xi, m_flow, cp_f, beta_ij)
-        return a_in, a_b
-
     def _outlet_fluid_temperature_a_in(self, beta_ij: Array) -> float:
         """Inlet coefficient to evaluate the outlet fluid temperature.
 
