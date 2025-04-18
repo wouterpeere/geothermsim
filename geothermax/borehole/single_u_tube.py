@@ -66,6 +66,85 @@ class SingleUTube(_Tube):
 
     """
 
+    def _fluid_temperature_a_in(self, xi: Array | float, beta_ij: Array) -> Array:
+        """Inlet coefficient to evaluate the fluid temperatures.
+
+        Parameters
+        ----------
+        xi : array or float
+            (M,) array of coordinates along the borehole.
+        beta_ij: array
+            (`n_pipes`, `n_pipes`,) array of thermal conductance
+            coefficients.
+
+        Returns
+        -------
+        array
+            (M, `n_pipes`,) array of coefficients for the inlet fluid
+            temperature.
+
+        """
+        b_in = self._outlet_fluid_temperature_a_in(beta_ij)
+        c_in = self._general_solution_a_in(xi, beta_ij)
+        c_out = self._general_solution_a_out(xi, beta_ij)
+        a_in = c_in + b_in * c_out
+        return a_in
+
+    def _fluid_temperature_a_b(self, xi: Array | float, beta_ij: Array) -> Array:
+        """Borehole wall coefficient to evaluate the fluid temperatures.
+
+        Parameters
+        ----------
+        xi : array or float
+            (M,) array of coordinates along the borehole.
+        beta_ij: array
+            (`n_pipes`, `n_pipes`,) array of thermal conductance
+            coefficients.
+
+        Returns
+        -------
+        array
+            (M, `n_nodes`,) array of coefficients for the borehole wall
+            temperature.
+
+        """
+        b_b = self._outlet_fluid_temperature_a_b(beta_ij)
+        c_out = self._general_solution_a_out(xi, beta_ij)
+        c_b = self._general_solution_a_b(xi, beta_ij)
+        a_b = c_b + vmap(jnp.outer, in_axes=(0, None))(c_out, b_b)
+        return a_b
+
+    def _general_solution(self, xi: Array | float, m_flow: float, cp_f: float) -> Tuple[Array, Array, Array]:
+        """Coefficients to evaluate the general solution.
+
+        Parameters
+        ----------
+        xi : array or float
+            (M,) array of coordinates along the borehole.
+        m_flow : float
+            Fluid mass flow rate (in kg/s).
+        cp_f : float
+            Fluid specific isobaric heat capacity (in J/kg-K).
+
+        Returns
+        -------
+        a_in : array or float
+            (M, `n_pipes`,) array of coefficients for the inlet fluid
+            temperature.
+        a_out : array or float
+            (M, `n_pipes`,) array of coefficients for the outlet fluid
+            temperature.
+        a_b : array
+            (M, `n_pipes`, `n_nodes`,) array of coefficients for the
+            borehole wall temperature.
+
+        """
+        beta_ij = self._beta_ij(m_flow, cp_f)
+        a_in = self._general_solution_a_in(xi, beta_ij)
+        a_out = self._general_solution_a_out(xi, beta_ij)
+        a_b = self._general_solution_a_b(xi, beta_ij)
+        return a_in, a_out, a_b
+
     def _general_solution_a_in(self, xi: Array | float, beta_ij: Array) -> Array:
         """Inlet coefficient to evaluate the general solution.
 
