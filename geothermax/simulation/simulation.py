@@ -72,24 +72,28 @@ class Simulation:
         if p is not None:
             p = jnp.asarray(p)
 
+        # --- Class atributes ---
+        # Parameters
         self.borefield = borefield
         self.cp_f = cp_f
         self.dt = dt
         self.tmax = tmax
         self.n_nodes = self.borefield.n_boreholes * self.borefield.n_nodes
-        self.n_times = int(tmax // dt)
         self.T0 = T0
         self.alpha = alpha
         self.k_s = k_s
         self.cells_per_level = cells_per_level
         self.p = p
+        self.store_node_values = store_node_values
+        # Additional attributes
+        self.n_times = int(tmax // dt)
         if p is None:
             self.T = None
             self.n_points = 0
         else:
             self.n_points = p.shape[0]
-        self.store_node_values = store_node_values
 
+        # --- Initialization ---
         self.loadAgg = LoadAggregation(
             borefield, dt, tmax, alpha, cells_per_level=cells_per_level, p=p)
         self.initialize_system_of_equations()
@@ -99,7 +103,9 @@ class Simulation:
 
         """
         N = self.n_nodes
+        # Thermal response factors
         self.h_to_self = self.loadAgg.h_to_self[0] / (2 * jnp.pi * self.k_s)
+        # Initialize system of equations
         self.A = jnp.block(
             [[-jnp.eye(N), jnp.zeros((N, 1))],
              [self.borefield.w.flatten(), jnp.zeros((1, 1))]]
@@ -122,10 +128,15 @@ class Simulation:
 
         """
         N = self.n_nodes
+        # Borehole heat transfer rate coefficients for current fluid mass
+        # flow rate `m_flow`
         self.g_in, self.g_b = self.borefield.g_to_self(m_flow, self.cp_f)
+        # Update system of equation for the current borehole wall
+        # temperature `T0` at nodes
         self.A = self.A.at[:N, :N].set(-(jnp.eye(N) + jnp.einsum('iml,iljn->imjn', self.g_b, self.h_to_self).reshape((N, N))))
         self.A = self.A.at[:N, -1].set(self.g_in.flatten())
         self.B = self.B.at[:N].set(-vmap(jnp.dot, in_axes=(0, 0), out_axes=0)(self.g_b, T0.reshape((self.borefield.n_boreholes, -1))).flatten())
+        # Apply total heat extraction rate `Q`
         self.B = self.B.at[-1].set(Q)
 
     def simulate(self, Q: ArrayLike, f_m_flow: Callable[[float], float | Array], m_flow_small: float = 0.01, disp: bool = True, print_every: int = 100):

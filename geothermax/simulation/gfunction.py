@@ -37,6 +37,8 @@ class gFunction:
 
     Attributes
     ----------
+    m_flow_network : float
+        Total fluid mass flow rate (in kg/s).
     g : array
         The g-function of the borefield.
     q : array
@@ -61,27 +63,30 @@ class gFunction:
         if p is not None:
             p = jnp.asarray(p)
 
+        # --- Class atributes ---
+        # Parameters
         self.borefield = borefield
         self.n_nodes = self.borefield.n_boreholes * self.borefield.n_nodes
         self.m_flow = m_flow
         self.cp_f = cp_f
         self.time = time
-        self.n_times = len(time)
         self.time = jnp.concatenate((jnp.array([0.]), self.time))
         self.alpha = alpha
         self.k_s = k_s
         self.p = p
+        # Additional attributes
+        self.n_times = len(time)
         if p is None:
             self.T = None
             self.n_points = 0
         else:
             self.n_points = p.shape[0]
-
         if len(jnp.shape(m_flow)) == 0:
             self.m_flow_network = m_flow
         else:
             self.m_flow_network = m_flow.sum()
 
+        # --- Initialization ---
         self.loaHisRec = LoadHistoryReconstruction(
             borefield, time, alpha, p=p, disp=disp)
         self.initialize_systems_of_equations()
@@ -91,6 +96,7 @@ class gFunction:
 
         """
         N = self.n_nodes
+        # Thermal response factors
         self.h_to_self = jnp.concatenate(
             (
                 jnp.zeros(
@@ -103,12 +109,15 @@ class gFunction:
                 self.loaHisRec.h_to_self / (2 * jnp.pi * self.k_s)
             ),
             axis=0)
+        # Borehole heat transfer rate coefficients
         self.g_in, self.g_b = self.borefield.g_to_self(self.m_flow, self.cp_f)
+        # Initialize system of equations
         self.A = jnp.block(
             [[jnp.eye(N), self.g_in.reshape((-1, 1))],
              [self.borefield.w.flatten(), jnp.zeros((1, 1))]]
             )
         self.B = jnp.zeros(N + 1)
+        # Apply constant total heat extraction rate
         self.B = self.B.at[-1].set(2 * jnp.pi * self.k_s * self.borefield.L.sum())
 
     def update_system_of_equations(self, h_to_self: Array, T0: Array):
@@ -124,7 +133,10 @@ class gFunction:
 
         """
         N = self.n_nodes
+        # Update system of equations for thermal response factors at the
+        # current time step `h_to_self`
         self.A = self.A.at[:N, :N].set(jnp.eye(N) + jnp.einsum('iml,iljn->imjn', self.g_b, h_to_self).reshape((N, N)))
+        # Apply current borehole wall temperature at nodes `T0`
         self.B = self.B.at[:N].set(vmap(jnp.dot, in_axes=(0, 0), out_axes=0)(-self.g_b, T0.reshape((self.borefield.n_boreholes, -1))).flatten())
 
     def simulate(self, disp: bool = True, print_every: int = 10):
