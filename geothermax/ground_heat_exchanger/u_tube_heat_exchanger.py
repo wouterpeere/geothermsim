@@ -43,6 +43,8 @@ class UTubeHeatExchanger:
         Fluid isobaric specific heat capacity (in J/kg-K).
     epsilon : float
         Pipe surface roughness (in meters).
+    parallel : bool, default: True
+        True if pipes are in parallel. False if pipes are in series.
     J : int, default: 3
         Order of the multipole solution.
 
@@ -55,7 +57,7 @@ class UTubeHeatExchanger:
 
     """
 
-    def __init__(self, p: ArrayLike, r_p_in: ArrayLike, r_p_out: ArrayLike, r_b: float, k_s: float, k_b: float, k_p: float, mu_f: float, rho_f: float, k_f: float, cp_f: float, epsilon: float, J: int = 3):
+    def __init__(self, p: ArrayLike, r_p_in: ArrayLike, r_p_out: ArrayLike, r_b: float, k_s: float, k_b: float, k_p: float, mu_f: float, rho_f: float, k_f: float, cp_f: float, epsilon: float, parallel: bool = True, J: int = 3):
         # Runtime type validation
         if not isinstance(r_p_in, ArrayLike):
             raise TypeError(f"Expected arraylike input; got {r_p_in}")
@@ -82,6 +84,7 @@ class UTubeHeatExchanger:
         self.k_f = k_f
         self.cp_f = cp_f
         self.epsilon = epsilon
+        self.parallel = parallel
         self.J = J
         # Additional attributes
         self.n_pipes = p.shape[0]
@@ -90,6 +93,11 @@ class UTubeHeatExchanger:
             in_axes=(0, 0, None),
             out_axes=0
         )(self.r_p_in, self.r_p_out, self.k_p)
+        _n_pipes_over_two = int(self.n_pipes / 2)
+        if self.parallel:
+            self._m_flow_factor = 1 / _n_pipes_over_two
+        else:
+            self._m_flow_factor = 1
 
         # --- Multipole model ---
         self.multipole = Multipole(
@@ -111,11 +119,12 @@ class UTubeHeatExchanger:
             resistances (in m-K/W).
 
         """
+        m_flow_pipe = self._m_flow_factor * m_flow
         h_fluid = vmap(
             convective_heat_transfer_coefficient_circular_pipe,
             in_axes=(None, 0, None, None, None, None, None),
             out_axes=0
-        )(m_flow, self.r_p_in, self.mu_f, self.rho_f, self.k_f, self.cp_f, self.epsilon)
+        )(m_flow_pipe, self.r_p_in, self.mu_f, self.rho_f, self.k_f, self.cp_f, self.epsilon)
         R_f = 1 / (2 * jnp.pi * self.r_p_in * h_fluid)
         R_fp = R_f + self.R_p
         R_d = self.multipole.thermal_resistances(R_fp)

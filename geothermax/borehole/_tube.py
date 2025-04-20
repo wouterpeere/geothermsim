@@ -35,6 +35,8 @@ class _Tube(Borehole, ABC):
         (i.e. ``sum(segment_ratios) = 1``). If `segment_ratios` is
         ``None``, segments of equal size are considered (i.e.
         ``segment_ratios[v] = 1 / n_segments``).
+    parallel : bool, default: True
+        True if pipes are in parallel. False if pipes are in series.
 
     Attributes
     ----------
@@ -67,7 +69,7 @@ class _Tube(Borehole, ABC):
 
     """
 
-    def __init__(self, R_d: ArrayLike | Callable[[float], Array], r_b: float, path: Path, basis: Basis, n_segments: int, segment_ratios: ArrayLike | None = None):
+    def __init__(self, R_d: ArrayLike | Callable[[float], Array], r_b: float, path: Path, basis: Basis, n_segments: int, segment_ratios: ArrayLike | None = None, parallel: bool = True):
         # Runtime type validation
         if not isinstance(R_d, ArrayLike) and not callable(R_d):
             raise TypeError(f"Expected arraylike or callable input; got {R_d}")
@@ -84,8 +86,45 @@ class _Tube(Borehole, ABC):
         super().__init__(r_b, path, basis, n_segments, segment_ratios=segment_ratios)
         # Other attributes
         self.R_d = R_d
+        self.parallel = parallel
         shape = jnp.shape(self.thermal_resistances(1.))
         self.n_pipes = shape[0]
+        self._n_pipes_over_two = int(self.n_pipes / 2)
+        # Coefficients related to pipe configuration
+        if self.parallel:
+            # Factor for flow division amongst pipes
+            self._m_flow_factor = 1 / self._n_pipes_over_two
+            # Coefficients for connectivity at the top of the borehole
+            # T_f_d(-1) = c_in * T_f_in + c_u @ T_f_u(-1)
+            self._top_connectivity_in = jnp.ones(self._n_pipes_over_two)
+            self._top_connectivity_u = jnp.zeros(
+                (self._n_pipes_over_two, self._n_pipes_over_two)
+            )
+            # Coefficient for mixing of the fluid at the outlet
+            # T_f_out = m_u @ T_f_u(-1)
+            self._mixing_u = jnp.full(
+                self._n_pipes_over_two,
+                self._m_flow_factor
+            )
+        else:
+            # Factor for flow division amongst pipes
+            self._m_flow_factor = 1
+            # Coefficients for connectivity at the top of the borehole
+            # T_f_d(-1) = c_in * T_f_in + c_u @ T_f_u(-1)
+            self._top_connectivity_in = jnp.concatenate([
+                jnp.ones(1),
+                jnp.zeros(self._n_pipes_over_two - 1),
+            ])
+            self._top_connectivity_u = jnp.eye(
+                self._n_pipes_over_two,
+                k=-1
+            )
+            # Coefficient for mixing of the fluid at the outlet
+            # T_f_out = m_u @ T_f_u(-1)
+            self._mixing_u = jnp.concatenate([
+                jnp.zeros(self._n_pipes_over_two - 1),
+                jnp.ones(1),
+            ])
 
     @partial(jit, static_argnames=['self'])
     def effective_borehole_thermal_resistance(self, m_flow: float, cp_f: float) -> float:
@@ -383,7 +422,7 @@ class _Tube(Borehole, ABC):
 
         """
         b_in = self._fluid_temperature_a_in(xi, beta_ij)
-        R_d = 1 / (m_flow * cp_f * beta_ij)
+        R_d = 1 / (self._m_flow_factor * m_flow * cp_f * beta_ij)
         a_in = -(b_in / jnp.diag(R_d)).sum(axis=1)
         return a_in
 
@@ -409,7 +448,7 @@ class _Tube(Borehole, ABC):
 
         """
         b_b = self._fluid_temperature_a_b(xi, beta_ij)
-        R_d = 1 / (m_flow * cp_f * beta_ij)
+        R_d = 1 / (self._m_flow_factor * m_flow * cp_f * beta_ij)
         R_b = 1 / (1 / jnp.diag(R_d)).sum()
         a_b = -(b_b / jnp.diag(R_d)[:, None]).sum(axis=1) + vmap(self.f_psi, in_axes=0)(xi) / R_b
         return a_b
@@ -463,7 +502,8 @@ class _Tube(Borehole, ABC):
         Parameters
         ----------
         beta_ij: array
-            (2, 2,) array of thermal conductance coefficients.
+            (`n_pipes`, `n_pipes`,) array of thermal conductance
+            coefficients.
 
         Returns
         -------
@@ -487,13 +527,14 @@ class _Tube(Borehole, ABC):
         Returns
         -------
         array
-            (2, 2,) array of thermal conductance coefficients.
+            (`n_pipes`, `n_pipes`,) array of thermal conductance
+            coefficients.
 
         """
-        return 1. / (m_flow * cp_f * self.thermal_resistances(m_flow))
+        return 1. / (self._m_flow_factor * m_flow * cp_f * self.thermal_resistances(m_flow))
 
     @classmethod
-    def from_dimensions(cls, R_d: ArrayLike | Callable[[float], Array], L: float, D: float, r_b: float, x: float, y: float, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None, order: int | None = None) -> Self:
+    def from_dimensions(cls, R_d: ArrayLike | Callable[[float], Array], L: float, D: float, r_b: float, x: float, y: float, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None, parallel: bool = True) -> Self:
         """Straight borehole from its dimensions.
 
         Parameters
@@ -527,6 +568,8 @@ class _Tube(Borehole, ABC):
             (i.e. ``sum(segment_ratios) = 1``). If `segment_ratios` is
             ``None``, segments of equal size are considered (i.e.
             ``segment_ratios[v] = 1 / n_segments``).
+        parallel : bool, default: True
+            True if pipes are in parallel. False if pipes are in series.
 
         Returns
         -------
@@ -541,5 +584,5 @@ class _Tube(Borehole, ABC):
                 [x + L * jnp.sin(tilt) * jnp.cos(orientation), y + L * jnp.sin(tilt) * jnp.sin(orientation), -D - L * jnp.cos(tilt)],
             ]
         )
-        path = Path(xi, p, order=order)
-        return cls(R_d, r_b, path, basis, n_segments, segment_ratios=segment_ratios)
+        path = Path(xi, p)
+        return cls(R_d, r_b, path, basis, n_segments, segment_ratios=segment_ratios, parallel=parallel)
