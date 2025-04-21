@@ -23,8 +23,11 @@ class Simulation:
         Time step (in seconds).
     tmax : float
         Maximum time of the simulation (in seconds).
-    T0 : float
-        Undisturbed ground temperature (in degree Celcius).
+    T0 : float or callable
+        Undisturbed ground temperature (in degree Celcius), or callable
+        that takes the time (in seconds) and a 1d array of positions ``z``
+        (in meters, negative) as inputs and returns a 1d array of
+        undisturbed ground temperatures (in degree Celsius).
     cp_f : float
         Fluid specific isobaric heat capacity (in J/kg-K).
     alpha : float
@@ -64,7 +67,7 @@ class Simulation:
 
     """
 
-    def __init__(self, borefield: Network, cp_f: float, dt: float, tmax: float, T0: float, alpha: float, k_s: float, cells_per_level: int = 5, p: ArrayLike | None = None, store_node_values: bool = False):
+    def __init__(self, borefield: Network, cp_f: float, dt: float, tmax: float, T0: float | Callable[[float, Array], Array | float], alpha: float, k_s: float, cells_per_level: int = 5, p: ArrayLike | None = None, store_node_values: bool = False):
         # Runtime type validation
         if not isinstance(p, ArrayLike) and p is not None:
             raise TypeError(f"Expected arraylike or None input; got {p}")
@@ -97,6 +100,13 @@ class Simulation:
         self.loadAgg = LoadAggregation(
             borefield, dt, tmax, alpha, cells_per_level=cells_per_level, p=p)
         self.initialize_system_of_equations()
+        # Convert `T0` to callable
+        if not callable(T0):
+            def undisturbed_ground_temperature(time: float, z: Array | float) -> float:
+                return T0
+            self.undisturbed_ground_temperature = undisturbed_ground_temperature
+        else:
+            self.undisturbed_ground_temperature = T0
 
     def initialize_system_of_equations(self):
         """Initialize the system of equations.
@@ -188,7 +198,11 @@ class Simulation:
             # Advance to next time step
             time = self.loadAgg.next_time_step()
             # Temporal and spatial superposition of past loads
-            T0 = self.T0 - self.loadAgg.temperature() / (2 * jnp.pi * self.k_s)
+            T0 = (
+                self.undisturbed_ground_temperature(
+                    time, self.borefield.p[..., 2])
+                - self.loadAgg.temperature() / (2 * jnp.pi * self.k_s)
+            )
             # Current load and fluid mass flow rate
             Q_k = next(Q_cycle)
             self.Q = self.Q.at[k].set(Q_k)
@@ -228,7 +242,10 @@ class Simulation:
                     self.T_b = self.T_b.at[k].set(T0)
             # Evaluate ground temperatures
             if self.p is not None:
-                self.T = self.T.at[k].set(self.T0 - self.loadAgg.temperature_to_point() / (2 * jnp.pi * self.k_s))
+                self.T = self.T.at[k].set(
+                    self.undisturbed_ground_temperature(
+                        time, self.p[:, 2])
+                    - self.loadAgg.temperature_to_point() / (2 * jnp.pi * self.k_s))
             k += 1
             if k >= next_k:
                 next_k += print_every
