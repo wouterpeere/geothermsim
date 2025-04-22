@@ -93,9 +93,9 @@ class UTubeHeatExchanger:
             in_axes=(0, 0, None),
             out_axes=0
         )(self.r_p_in, self.r_p_out, self.k_p)
-        _n_pipes_over_two = int(self.n_pipes / 2)
+        self._n_pipes_over_two = int(self.n_pipes / 2)
         if self.parallel:
-            self._m_flow_factor = 1 / _n_pipes_over_two
+            self._m_flow_factor = 1 / self._n_pipes_over_two
         else:
             self._m_flow_factor = 1
 
