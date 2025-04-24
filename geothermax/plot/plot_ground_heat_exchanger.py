@@ -7,7 +7,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from ._format_axis import _format_axis
-from ..ground_heat_exchanger.u_tube_heat_exchanger import UTubeHeatExchanger
+from ..ground_heat_exchanger import UTubeHeatExchanger
 
 
 def plot_ground_heat_exchanger(ground_heat_exchanger: UTubeHeatExchanger, ax: Axes | None = None) -> Axes | Tuple[Figure, Axes]:
