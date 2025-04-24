@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 from collections.abc import Callable
+from functools import partial
 from itertools import cycle
 from time import perf_counter
+from typing import Tuple
 
 from jax import numpy as jnp
 from jax import Array, jit, vmap
@@ -122,7 +124,7 @@ class Simulation:
             )
         self.B = jnp.zeros(N + 1)
 
-    def update_system_of_equations(self, m_flow: float | Array, Q: float, T0: Array):
+    def update_system_of_equations(self, m_flow: float | Array, Q: float, T0: Array) -> Tuple[Array, Array]:
         """Update the system of equations.
 
         Parameters
@@ -136,6 +138,13 @@ class Simulation:
             Borehole wall temperature at nodes (in degree Celsius)
             assuming zero heat extraction rate.
 
+        Returns
+        -------
+        A : array
+            Linear system of equations.
+        B : array
+            Right-hand side of the linear system of equations.
+
         """
         N = self.n_nodes
         # Borehole heat transfer rate coefficients for current fluid mass
@@ -143,11 +152,12 @@ class Simulation:
         self.g_in, self.g_b = self.borefield.g_to_self(m_flow, self.cp_f)
         # Update system of equation for the current borehole wall
         # temperature `T0` at nodes
-        self.A = self.A.at[:N, :N].set(-(jnp.eye(N) + jnp.einsum('iml,iljn->imjn', self.g_b, self.h_to_self).reshape((N, N))))
-        self.A = self.A.at[:N, -1].set(self.g_in.flatten())
-        self.B = self.B.at[:N].set(-vmap(jnp.dot, in_axes=(0, 0), out_axes=0)(self.g_b, T0.reshape((self.borefield.n_boreholes, -1))).flatten())
+        A = self.A.at[:N, :N].set(-(jnp.eye(N) + jnp.einsum('iml,iljn->imjn', self.g_b, self.h_to_self).reshape((N, N))))
+        A = A.at[:N, -1].set(self.g_in.flatten())
+        B = self.B.at[:N].set(-vmap(jnp.dot, in_axes=(0, 0), out_axes=0)(self.g_b, T0.reshape((self.borefield.n_boreholes, -1))).flatten())
         # Apply total heat extraction rate `Q`
-        self.B = self.B.at[-1].set(Q)
+        B = B.at[-1].set(Q)
+        return A, B
 
     def simulate(self, Q: ArrayLike, f_m_flow: Callable[[float], float | Array], m_flow_small: float = 0.01, disp: bool = True, print_every: int = 100):
         """Simulate the borefield.
@@ -204,9 +214,9 @@ class Simulation:
                 - self.loadAgg.temperature() / (2 * jnp.pi * self.k_s)
             )
             # Current load and fluid mass flow rate
-            Q_k = next(Q_cycle)
-            self.Q = self.Q.at[k].set(Q_k)
-            m_flow = f_m_flow(Q_k)
+            current_Q = next(Q_cycle)
+            self.Q = self.Q.at[k].set(current_Q)
+            m_flow = f_m_flow(current_Q)
             if len(jnp.shape(m_flow)) == 0:
                 m_flow_network = m_flow
             else:
@@ -215,17 +225,11 @@ class Simulation:
             # Only solve if the total fluid mass flow rate is not zero
             if m_flow_network > m_flow_small:
                 # Build and solve system of equations
-                self.update_system_of_equations(
+                q, T_b, T_f_in, T_f_out = self._simulate_step(
                     jnp.maximum(m_flow, m_flow_small),
-                    Q_k,
+                    current_Q,
                     T0)
-                X = jnp.linalg.solve(self.A, self.B)
-                # Store results
-                q = X[:self.n_nodes].reshape((self.borefield.n_boreholes, -1))
-                T_b = T0 - jnp.tensordot(self.h_to_self, q, axes=([-2, -1], [-2, -1]))
-                T_f_in = X[-1]
                 self.T_f_in = self.T_f_in.at[k].set(T_f_in)
-                T_f_out = T_f_in + Q_k / (m_flow_network * self.cp_f)
                 self.T_f_out = self.T_f_out.at[k].set(T_f_out)
                 # Apply latest heat extraction rates
                 self.loadAgg.set_current_load(q)
@@ -259,3 +263,42 @@ class Simulation:
             print(
                 f'Simulation end. Elapsed time: {toc-tic:.2f} seconds.'
             )
+
+    @partial(jit, static_argnames=['self'])
+    def _simulate_step(self, m_flow: float | Array, Q: float, T0: Array) -> Tuple[Array, Array, float, float]:
+        """Solve a single time step.
+
+        Parameters
+        ----------
+        m_flow : float or array
+            Total fluid mass flow rate (in kg/s), or array of fluid mass
+            flow rate per borehole.
+        Q : float
+            The total heat extraction rate (in watts).
+        T0 : array
+            Borehole wall temperature at nodes assuming zero heat
+            extraction rate (in degree Celsius).
+
+        Returns
+        -------
+        q : array
+            The heat extraction rate at the nodes (in W/m).
+        T_b : array
+            The borehole wall temperature at the nodes (in degree
+            Celsius).
+        T_f_in : float
+            The inlet fluid temperature (in degree Celsius).
+
+        """
+        # Build and solve system of equations
+        A, B = self.update_system_of_equations(
+            m_flow,
+            Q,
+            T0)
+        X = jnp.linalg.solve(A, B)
+        # Store results
+        q = X[:self.n_nodes].reshape((self.borefield.n_boreholes, -1))
+        T_b = T0 - jnp.tensordot(self.h_to_self, q, axes=([-2, -1], [-2, -1]))
+        T_f_in = X[-1]
+        T_f_out = T_f_in + Q / (jnp.sum(m_flow) * self.cp_f)
+        return q, T_b, T_f_in, T_f_out

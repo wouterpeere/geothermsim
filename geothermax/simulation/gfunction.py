@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
+from functools import partial
 from time import perf_counter
+from typing import Tuple
 
 from jax import numpy as jnp
 from jax import Array, jit, vmap
@@ -120,7 +122,7 @@ class gFunction:
         # Apply constant total heat extraction rate
         self.B = self.B.at[-1].set(2 * jnp.pi * self.k_s * self.borefield.L.sum())
 
-    def update_system_of_equations(self, h_to_self: Array, T0: Array):
+    def update_system_of_equations(self, h_to_self: Array, T0: Array) -> Tuple[Array, Array]:
         """Update the system of equations.
 
         Parameters
@@ -131,13 +133,21 @@ class gFunction:
             Borehole wall temperature at nodes assuming zero heat
             extraction rate.
 
+        Returns
+        -------
+        A : array
+            Linear system of equations.
+        B : array
+            Right-hand side of the linear system of equations.
+
         """
         N = self.n_nodes
         # Update system of equations for thermal response factors at the
         # current time step `h_to_self`
-        self.A = self.A.at[:N, :N].set(jnp.eye(N) + jnp.einsum('iml,iljn->imjn', self.g_b, h_to_self).reshape((N, N)))
+        A = self.A.at[:N, :N].set(jnp.eye(N) + jnp.einsum('iml,iljn->imjn', self.g_b, h_to_self).reshape((N, N)))
         # Apply current borehole wall temperature at nodes `T0`
-        self.B = self.B.at[:N].set(vmap(jnp.dot, in_axes=(0, 0), out_axes=0)(-self.g_b, T0.reshape((self.borefield.n_boreholes, -1))).flatten())
+        B = self.B.at[:N].set(vmap(jnp.dot, in_axes=(0, 0), out_axes=0)(-self.g_b, T0.reshape((self.borefield.n_boreholes, -1))).flatten())
+        return A, B
 
     def simulate(self, disp: bool = True, print_every: int = 10):
         """Evaluate the g-function.
@@ -154,8 +164,6 @@ class gFunction:
         next_k = print_every
         if disp:
             print('Simulation start.')
-        N = self.n_nodes
-        h_shape = self.h_to_self.shape
         self.loaHisRec.reset_history()
         # Initialize arrays
         self.q = jnp.zeros((self.n_times, self.borefield.n_boreholes, self.borefield.n_nodes))
@@ -169,26 +177,16 @@ class gFunction:
             # Advance to next time step
             time = self.loaHisRec.next_time_step()
             dtime = self.time[k + 1] - self.time[k]
-            h = vmap(
-                lambda _h: jnp.interp(dtime, self.time, _h),
-                in_axes=-1,
-                out_axes=-1
-                )(
-                self.h_to_self.reshape((h_shape[0], -1))
-            ).reshape(h_shape[1:])
             # Temporal and spatial superposition of past loads
             T0 = self.loaHisRec.temperature() / (2 * jnp.pi * self.k_s)
             # Build and solve system of equations
-            self.update_system_of_equations(h, T0)
-            X = jnp.linalg.solve(self.A, self.B)
-            q = X[:self.n_nodes].reshape((self.borefield.n_boreholes, -1))
-            T_b = T0 + jnp.tensordot(h, q, axes=([-2, -1], [-2, -1]))
+            q, T_b, T_f_in = self._simulate_step(dtime, T0)
             # Apply latest heat extraction rates
             self.loaHisRec.set_current_load(q)
             # Store results
             self.q = self.q.at[k].set(q)
             self.T_b = self.T_b.at[k].set(T_b)
-            self.T_f_in = self.T_f_in.at[k].set(X[-1])
+            self.T_f_in = self.T_f_in.at[k].set(T_f_in)
             # Evaluate ground temperatures
             if self.p is not None:
                 self.T = self.T.at[k].set(self.loaHisRec.temperature_to_point())
@@ -212,3 +210,44 @@ class gFunction:
             print(
                 f'Simulation end. Elapsed time: {toc-tic:.2f} seconds.'
             )
+
+    @partial(jit, static_argnames=['self'])
+    def _simulate_step(self, dtime: float, T0: Array) -> Tuple[Array, Array, float]:
+        """Solve a single time step.
+
+        Parameters
+        ----------
+        dtime : float
+            Current time step variation (in seconds).
+        T0 : array
+            Borehole wall temperature at nodes assuming zero heat
+            extraction rate.
+
+        Returns
+        -------
+        q : array
+            The heat extraction rate at the nodes (in W/m).
+        T_b : array
+            The borehole wall temperature at the nodes (in degree
+            Celsius).
+        T_f_in : float
+            The inlet fluid temperature (in degree Celsius).
+
+        """
+        # Current thermal response factors
+        h_shape = self.h_to_self.shape
+        h = vmap(
+            lambda _h: jnp.interp(dtime, self.time, _h),
+            in_axes=-1,
+            out_axes=-1
+            )(
+            self.h_to_self.reshape((h_shape[0], -1))
+        ).reshape(h_shape[1:])
+        # Build and solve system of equations
+        A, B = self.update_system_of_equations(h, T0)
+        X = jnp.linalg.solve(A, B)
+        q = X[:self.n_nodes].reshape((self.borefield.n_boreholes, -1))
+        T_b = T0 + jnp.tensordot(h, q, axes=([-2, -1], [-2, -1]))
+        T_f_in = X[-1]
+        return q, T_b, T_f_in
+        

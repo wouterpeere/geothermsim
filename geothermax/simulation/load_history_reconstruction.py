@@ -61,7 +61,7 @@ class LoadHistoryReconstruction(_TemporalSuperposition):
         self.alpha = alpha
         self.p = p
         self.q = jnp.zeros((len(self.time), borefield.n_boreholes, borefield.n_nodes))
-        self.q_reconstructed = jnp.zeros((0, borefield.n_boreholes, borefield.n_nodes))
+        self.q_reconstructed = jnp.zeros((len(self.time), borefield.n_boreholes, borefield.n_nodes))
         self._time = 0.
         self._k = -1
         if disp:
@@ -109,7 +109,7 @@ class LoadHistoryReconstruction(_TemporalSuperposition):
 
         """
         self.q = self.q.at[:].set(0.)
-        self.q_reconstructed = jnp.zeros((0, self.borefield.n_boreholes, self.borefield.n_nodes))
+        self.q_reconstructed = self.q_reconstructed.at[:].set(0.)
         self._time = 0.
         self._k = -1
         return
@@ -137,8 +137,8 @@ class LoadHistoryReconstruction(_TemporalSuperposition):
             temperature variations (in degree Celcius).
 
         """
-        self.q_reconstructed = self._reconstruct_load_history(self.time[:self._k+1], self.q[:self._k+1])
-        T = self._temperature(self.h_to_self[:self._k+1], self.q_reconstructed)
+        self.q_reconstructed = self._reconstruct_load_history(self._time, self.time, self.q)
+        T = self._temperature(self.h_to_self, self.q_reconstructed)
         return T
 
     def temperature_to_point(self) -> Array:
@@ -151,8 +151,8 @@ class LoadHistoryReconstruction(_TemporalSuperposition):
             (in degree Celcius).
 
         """
-        self.q_reconstructed = self._reconstruct_load_history(self.time[:self._k+1], self.q[:self._k+1])
-        T = self._temperature_to_point(self.h_to_point[:self._k+1], self.q_reconstructed)
+        self.q_reconstructed = self._reconstruct_load_history(self._time, self.time, self.q)
+        T = self._temperature_to_point(self.h_to_point, self.q_reconstructed)
         return T
 
     @staticmethod
@@ -180,28 +180,31 @@ class LoadHistoryReconstruction(_TemporalSuperposition):
 
     @staticmethod
     @jit
-    def _reconstruct_load_history(time: Array, q: Array) -> Array:
+    def _reconstruct_load_history(current_time: float, time: Array, q: Array) -> Array:
         """Reconstruct the load history
 
         Parameters
         ----------
-        time :
-            (K,) array of time steps.
+        current_time : float
+            Current time (in seconds).
+        time : array
+            (`n_times`,) array of time steps (in seconds).
         q : array
-            (K, `n_boreholes`, `n_nodes`,) array of loads (in W/m).
+            (`n_times`,`n_boreholes`, `n_nodes`,) array of loads (in W/m).
 
         Returns
         -------
         array
-            (K, `n_boreholes`, `n_nodes`,) array of reconstructed loads
-            (in W/m).
+            (`n_times`,`n_boreholes`, `n_nodes`,) array of reconstructed
+            loads (in W/m).
 
         """
         time = jnp.concatenate((jnp.zeros(1), time))
         dtime = jnp.diff(time)
         q_accumulated = jnp.concatenate((jnp.zeros((1, ) + q.shape[1:]), jnp.cumsum((q.T * dtime).T, axis=0)))
+        time_reconstructed = (current_time - time)[::-1]
         dtime_reconstructed = dtime[::-1]
-        time_reconstructed = jnp.concatenate((jnp.zeros(1), jnp.cumsum(dtime_reconstructed)))
+        time_reconstructed = jnp.maximum(0., time_reconstructed)
         q_reconstructed = vmap(
             vmap(
                 lambda _q: jnp.interp(time_reconstructed[1:], time, _q) - jnp.interp(time_reconstructed[:-1], time, _q),
