@@ -1,8 +1,13 @@
 from .conduction_thermal_resistance import conduction_thermal_resistance_circular_pipe
 from .convective_heat_transfer_coefficient import (
+convective_heat_transfer_coefficient_annular_pipe,
 convective_heat_transfer_coefficient_circular_pipe,
+nusselt_number_annular_pipe,
 nusselt_number_circular_pipe
 )
 from .darcy_friction_factor import darcy_friction_factor
-from .reynolds_number import reynolds_number_circular_pipe
+from .reynolds_number import (
+reynolds_number_annular_pipe,
+reynolds_number_circular_pipe
+)
 from .multipole import Multipole
