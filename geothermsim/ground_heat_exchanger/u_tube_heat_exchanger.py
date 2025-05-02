@@ -5,7 +5,7 @@ from jax import numpy as jnp
 from jax import Array, jit, vmap
 from jax.typing import ArrayLike
 
-from ..borehole import SingleUTube
+from ._ground_heat_exchanger import _GroundHeatExchanger
 from ..thermal_resistance import (
 conduction_thermal_resistance_circular_pipe,
 convective_heat_transfer_coefficient_circular_pipe,
@@ -13,7 +13,7 @@ Multipole
 )
 
 
-class UTubeHeatExchanger:
+class UTubeHeatExchanger(_GroundHeatExchanger):
     """U-tube heat exchanger cross-section.
 
     Parameters
