@@ -189,7 +189,9 @@ class gFunction:
             self.T_f_in = self.T_f_in.at[k].set(T_f_in)
             # Evaluate ground temperatures
             if self.p is not None:
-                self.T = self.T.at[k].set(self.loaHisRec.temperature_to_point())
+                self.T = self.T.at[k].set(
+                    self.loaHisRec.temperature_to_point() / (2 * jnp.pi * self.k_s)
+                )
             if k >= next_k:
                 next_k += print_every
                 toc = perf_counter()
