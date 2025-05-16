@@ -8,6 +8,7 @@ from jax import numpy as jnp
 from jax import Array, jacobian, jit, vmap
 from jax.typing import ArrayLike
 from jax.scipy.special import erfc
+from scipy.integrate import fixed_quad
 
 
 class Path:
@@ -290,10 +291,9 @@ class Path:
             path and for the longitudinal position ``s`` along the
             path.
         s_order : int, default: 21
-            Number of points for the trapezoidal integration of the
-            Jacobian between each subsequent coordinates to obtain the
-            longitudinal position ``s`` from the norm of the Jacobian
-            along the path.
+            Number of points for the integration of the Jacobian between
+            each subsequent coordinates to obtain the ongitudinal
+            position ``s`` from the norm of the Jacobian along the path.
         s_num : int, default: 21
             Number of evenly distributed knots along the path to
             evaluate the longitudinal position ``s`` using trapezoidal
@@ -327,12 +327,12 @@ class Path:
         # Longitudinal position along the path
         s_xi = jnp.linspace(-1., 1., num=s_num)
         a, b = s_xi[:-1], s_xi[1:]
-        eta = jnp.stack([jnp.linspace(_a, _b, num=s_order) for _a, _b in zip(a, b)])
-        ds = vmap(
-            lambda _eta: jnp.trapezoid(f_J(_eta), _eta),
-            in_axes=0,
-            out_axes=0
-        )(eta)
+        ds = jnp.array(
+            [
+                fixed_quad(f_J, _a, _b, n=s_order)[0]
+                for _a, _b in zip(a, b)
+            ]
+        )
         s = jnp.cumulative_sum(ds, include_initial=True)
         f_s = Interpolator1D(s_xi, s, method=s_method, extrap=True)
         return cls(f_p, f_dp_dxi, f_J, f_s, xi=xi, p=p)
@@ -360,10 +360,9 @@ class Path:
             path and for the longitudinal position ``s`` along the
             path.
         s_order : int, default: 21
-            Number of points for the trapezoidal integration of the
-            Jacobian between each subsequent coordinates to obtain the
-            longitudinal position ``s`` from the norm of the Jacobian
-            along the path.
+            Number of points for the integration of the Jacobian between
+            each subsequent coordinates to obtain the ongitudinal
+            position ``s`` from the norm of the Jacobian along the path.
         s_num : int, default: 21
             Number of evenly distributed knots along the path to
             evaluate the longitudinal position ``s`` using trapezoidal
@@ -412,12 +411,12 @@ class Path:
         # Longitudinal position along the path
         s_xi = jnp.linspace(-1., 1., num=s_num)
         a, b = s_xi[:-1], s_xi[1:]
-        eta = jnp.stack([jnp.linspace(_a, _b, num=s_order) for _a, _b in zip(a, b)])
-        ds = vmap(
-            lambda _eta: jnp.trapezoid(f_J(_eta), _eta),
-            in_axes=0,
-            out_axes=0
-        )(eta)
+        ds = jnp.array(
+            [
+                fixed_quad(f_J, _a, _b, n=s_order)[0]
+                for _a, _b in zip(a, b)
+            ]
+        )
         s = jnp.cumulative_sum(ds, include_initial=True)
         f_s = Interpolator1D(s_xi, s, method=s_method, extrap=True)
         return cls(f_p, f_dp_dxi, f_J, f_s, xi=xi, p=p)
