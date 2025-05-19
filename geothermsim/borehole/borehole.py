@@ -299,5 +299,5 @@ class Borehole:
             Instance of the `Borehole` class.
 
         """
-        path = Path.from_dimensions(L, D, x, y, tilt, orientation)
+        path = Path.Line(L, D, x, y, tilt, orientation)
         return cls(r_b, path, basis, n_segments, segment_ratios=segment_ratios)

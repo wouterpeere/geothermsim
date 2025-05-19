@@ -209,7 +209,7 @@ class Borefield:
         orientation = jnp.broadcast_to(orientation, n_boreholes)
         boreholes = []
         for j in range(n_boreholes):
-            path = Path.from_dimensions(L[j], D[j], x[j], y[j], tilt[j], orientation[j])
+            path = Path.Line(L[j], D[j], x[j], y[j], tilt[j], orientation[j])
             boreholes.append(Borehole(r_b[j], path, basis, n_segments, segment_ratios=segment_ratios))
         return cls(boreholes)
 

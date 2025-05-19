@@ -207,7 +207,7 @@ class Path:
         return h * self.f_J(xi)
 
     @classmethod
-    def from_dimensions(cls, L: float, D: float, x: float, y: float, tilt: float, orientation: float) -> Self:
+    def Line(cls, L: float, D: float, x: float, y: float, tilt: float, orientation: float) -> Self:
         """Path from the dimensions of a borehole.
 
         Parameters
@@ -272,69 +272,6 @@ class Path:
         def f_s(_xi: float | Array) -> float | Array:
             """Longitudinal position along the path."""
             return 0.5 * (1 + _xi) * L
-        return cls(f_p, f_dp_dxi, f_J, f_s, xi=xi, p=p)
-
-    @classmethod
-    def from_points(cls, xi: ArrayLike, p: ArrayLike, method: str = 'cubic2', s_method: str = 'monotonic', s_order: int = 21, s_num: int = 21) -> Self:
-        """Path from positions along the path.
-
-        Parameters
-        ----------
-        xi : array_like
-            (N,) array of coordinates along the path. Should be of
-            sufficient length for the selected interpolation methods.
-        p : array_like
-            (N, 3,) array of positions (in meters) along the path.
-        method, s_method : str, default: 'cubic2', 'monotonic'
-            Interpolation methods to be used by
-            ``interpax.Interpolator1D`` for the position along the
-            path and for the longitudinal position ``s`` along the
-            path.
-        s_order : int, default: 21
-            Number of points for the integration of the Jacobian between
-            each subsequent coordinates to obtain the ongitudinal
-            position ``s`` from the norm of the Jacobian along the path.
-        s_num : int, default: 21
-            Number of evenly distributed knots along the path to
-            evaluate the longitudinal position ``s`` using trapezoidal
-            integration and generate the interpolator.
-            
-
-        Returns
-        -------
-        path
-            Instance of the `Path` class.
-
-        """
-        # Runtime type validation
-        if not isinstance(xi, ArrayLike):
-            raise TypeError(f"Expected arraylike input; got {xi}")
-        if not isinstance(p, ArrayLike):
-            raise TypeError(f"Expected arraylike input; got {p}")
-        # Convert input to jax.Array
-        xi = jnp.asarray(xi)
-        p = jnp.atleast_2d(p)
-
-        # --- Path functions ---
-        # Position along the path
-        f_p = Interpolator1D(xi, p, method=method, extrap=True)
-        # Derivative of the position along the path
-        f_dp_dxi = partial(f_p, dx=1)
-        # Norm of the Jacobian along the path
-        def f_J(_xi: float | Array) -> float | Array:
-            """Norm of the Jacobian along the path."""
-            return jnp.linalg.norm(f_dp_dxi(_xi), axis=-1)
-        # Longitudinal position along the path
-        s_xi = jnp.linspace(-1., 1., num=s_num)
-        a, b = s_xi[:-1], s_xi[1:]
-        ds = jnp.array(
-            [
-                fixed_quad(f_J, _a, _b, n=s_order)[0]
-                for _a, _b in zip(a, b)
-            ]
-        )
-        s = jnp.cumulative_sum(ds, include_initial=True)
-        f_s = Interpolator1D(s_xi, s, method=s_method, extrap=True)
         return cls(f_p, f_dp_dxi, f_J, f_s, xi=xi, p=p)
 
     @classmethod
@@ -404,6 +341,69 @@ class Path:
             if len(jnp.shape(_xi)) > 0:
                 return vmap(f_dp_dxi, in_axes=0)(_xi)
             return _f_dp_dxi(_xi)
+        # Norm of the Jacobian along the path
+        def f_J(_xi: float | Array) -> float | Array:
+            """Norm of the Jacobian along the path."""
+            return jnp.linalg.norm(f_dp_dxi(_xi), axis=-1)
+        # Longitudinal position along the path
+        s_xi = jnp.linspace(-1., 1., num=s_num)
+        a, b = s_xi[:-1], s_xi[1:]
+        ds = jnp.array(
+            [
+                fixed_quad(f_J, _a, _b, n=s_order)[0]
+                for _a, _b in zip(a, b)
+            ]
+        )
+        s = jnp.cumulative_sum(ds, include_initial=True)
+        f_s = Interpolator1D(s_xi, s, method=s_method, extrap=True)
+        return cls(f_p, f_dp_dxi, f_J, f_s, xi=xi, p=p)
+
+    @classmethod
+    def Spline(cls, xi: ArrayLike, p: ArrayLike, method: str = 'cubic2', s_method: str = 'monotonic', s_order: int = 21, s_num: int = 21) -> Self:
+        """Path from positions along the path.
+
+        Parameters
+        ----------
+        xi : array_like
+            (N,) array of coordinates along the path. Should be of
+            sufficient length for the selected interpolation methods.
+        p : array_like
+            (N, 3,) array of positions (in meters) along the path.
+        method, s_method : str, default: 'cubic2', 'monotonic'
+            Interpolation methods to be used by
+            ``interpax.Interpolator1D`` for the position along the
+            path and for the longitudinal position ``s`` along the
+            path.
+        s_order : int, default: 21
+            Number of points for the integration of the Jacobian between
+            each subsequent coordinates to obtain the ongitudinal
+            position ``s`` from the norm of the Jacobian along the path.
+        s_num : int, default: 21
+            Number of evenly distributed knots along the path to
+            evaluate the longitudinal position ``s`` using trapezoidal
+            integration and generate the interpolator.
+            
+
+        Returns
+        -------
+        path
+            Instance of the `Path` class.
+
+        """
+        # Runtime type validation
+        if not isinstance(xi, ArrayLike):
+            raise TypeError(f"Expected arraylike input; got {xi}")
+        if not isinstance(p, ArrayLike):
+            raise TypeError(f"Expected arraylike input; got {p}")
+        # Convert input to jax.Array
+        xi = jnp.asarray(xi)
+        p = jnp.atleast_2d(p)
+
+        # --- Path functions ---
+        # Position along the path
+        f_p = Interpolator1D(xi, p, method=method, extrap=True)
+        # Derivative of the position along the path
+        f_dp_dxi = partial(f_p, dx=1)
         # Norm of the Jacobian along the path
         def f_J(_xi: float | Array) -> float | Array:
             """Norm of the Jacobian along the path."""
