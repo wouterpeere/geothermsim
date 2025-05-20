@@ -335,16 +335,27 @@ class Path:
                 return vmap(f_p, in_axes=0)(_xi)
             return jnp.polyval(p_coefs, _xi)
         # Derivative of the position along the path
-        _f_dp_dxi = jacobian(f_p)
+        dp_coefs = vmap(
+            jnp.polyder,
+            in_axes=-1,
+            out_axes=-1
+        )(p_coefs)
         def f_dp_dxi(_xi: float | Array) -> Array:
             """Derivative of the position along the path."""
             if len(jnp.shape(_xi)) > 0:
                 return vmap(f_dp_dxi, in_axes=0)(_xi)
-            return _f_dp_dxi(_xi)
+            return jnp.polyval(dp_coefs, _xi)
         # Norm of the Jacobian along the path
+        dp_square_coefs = vmap(
+            jnp.polymul,
+            in_axes=-1,
+            out_axes=-1
+        )(dp_coefs, dp_coefs)
         def f_J(_xi: float | Array) -> float | Array:
             """Norm of the Jacobian along the path."""
-            return jnp.linalg.norm(f_dp_dxi(_xi), axis=-1)
+            if len(jnp.shape(_xi)) > 0:
+                return vmap(f_J, in_axes=0)(_xi)
+            return jnp.sqrt(jnp.polyval(dp_square_coefs, _xi).sum(axis=-1))
         # Longitudinal position along the path
         s_xi = jnp.linspace(-1., 1., num=s_num)
         a, b = s_xi[:-1], s_xi[1:]
