@@ -152,60 +152,6 @@ class Path:
         """
         return self._f_s(xi)
 
-    @partial(jit, static_argnames=['self'])
-    def point_heat_source(self, xi: Array | float, p: Array, time: Array | float, alpha: float, r_min: float = 0.) -> Array | float:
-        """Point heat source solution.
-
-        Parameters
-        ----------
-        xi : array or float
-            (N,) array of the coordinates of the point heat sources along
-            the trajectory.
-        p : array
-            (M, 3,) array of the positions at which the point heat source
-            solution is evaluated.
-        time : array or float
-            (K,) array of times (in seconds).
-        alpha : float
-            Ground thermal diffusivity (in m^2/s).
-        r_min : float, default: ``0.``
-            Minimum distance (in meters) between point heat sources and
-            positions `p`.
-
-        Returns
-        -------
-        array or float
-            (K, M, N,) array of values of the point heat source solution.
-            For each of the parameters `xi`, `p` and `time`, the
-            corresponding axis is removed if the parameter is supplied as
-            a ``float``.
-
-        """
-        if len(jnp.shape(time)) > 0:
-            return vmap(
-                self.point_heat_source,
-                in_axes=(None, None, -1, None, None)
-            )(xi, p, time, alpha, r_min)
-        if len(jnp.shape(p)) > 1:
-            return vmap(
-                self.point_heat_source,
-                in_axes=(None, -2, None, None, None)
-            )(xi, p, time, alpha, r_min)
-        if len(jnp.shape(xi)) > 0:
-            return vmap(
-                self.point_heat_source,
-                in_axes=(-1, None, None, None, None)
-            )(xi, p, time, alpha, r_min)
-        # Current position of the point source
-        p_source = self.f_p(xi)
-        # Distance to the real point (p)
-        r = jnp.sqrt(((p_source - p)**2).sum() + r_min**2)
-        # Distance to the mirror point (p')
-        r_mirror = jnp.linalg.norm(p_source - p * jnp.array([1, 1, -1]))
-        # Point heat source solution
-        h = 0.5 * erfc(r / jnp.sqrt(4 * alpha * time)) / r - 0.5 * erfc(r_mirror / jnp.sqrt(4 * alpha * time)) / r_mirror
-        return h * self.f_J(xi)
-
     @classmethod
     def Line(cls, L: float, D: float, x: float, y: float, tilt: float, orientation: float) -> Self:
         """Path from the dimensions of a borehole.

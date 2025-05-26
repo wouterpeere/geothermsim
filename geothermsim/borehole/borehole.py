@@ -7,6 +7,7 @@ from jax import Array, jit, vmap
 from jax.typing import ArrayLike
 
 from ..basis import Basis
+from ..heat_transfer import point_heat_source
 from ..path import Path
 
 
@@ -224,11 +225,10 @@ class Borehole:
             in_axes=0,
             out_axes=-1)
         # Integral of the point heat source
-        n_times = len(time)
         n_nodes = self.n_nodes
         h_to_self = self.basis.quad_ts_nodes(
             integrand
-        ).reshape(n_times, n_nodes, n_nodes)
+        ).reshape(-1, n_nodes, n_nodes)
         return h_to_self
 
     @partial(jit, static_argnames=['self'])
@@ -257,8 +257,10 @@ class Borehole:
         """
         # Coordinates (xi) of all sources at local segment coordinates (xi')
         xi = self.f_xi_sb(xi_p)
+        p_source = self.path.f_p(xi)
+        J = self.path.f_J(xi)
         # Point heat source solutions
-        h = self.path.point_heat_source(xi, p, time, alpha, r_min=r_min) * self.segment_ratios
+        h = point_heat_source(p_source, p, time, J, alpha, r_min=r_min) * self.segment_ratios
         return h
 
     @classmethod
