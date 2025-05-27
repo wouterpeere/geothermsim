@@ -146,7 +146,6 @@ class Borehole:
         """
         return self.h_to_point(borehole.p, time, alpha)
 
-    @partial(jit, static_argnames=['self'])
     def h_to_coordinate_on_self(self, xi: Array, time: Array, alpha: float) -> Array:
         """Thermal response factors to coordinates along itself.
 
@@ -169,7 +168,6 @@ class Borehole:
         p = self.path.f_p(xi)
         return self.h_to_point(p, time, alpha, r_min=self.r_b)
 
-    @partial(jit, static_argnames=['self'])
     def h_to_point(self, p: Array, time: Array, alpha: float, r_min: float = 0.):
         """Thermal response factors to a point.
 
@@ -191,19 +189,31 @@ class Borehole:
         array
             (K, M, `n_nodes`,) array of thermal response factors.
         """
-        # Integrand of point heat source
-        integrand = vmap(
-            lambda _eta: self._segment_point_heat_source(_eta, p, time, alpha, r_min=r_min),
-            in_axes=0,
-            out_axes=-1)
-        n_times = len(time)
         n_nodes = self.n_nodes
-        h_to_point = self.basis.quad_gl(
-            integrand, -1., 1.
-        ).reshape(n_times, -1, n_nodes)
+        if len(jnp.shape(time)) > 0:
+            n_times = len(time)
+            if len(jnp.shape(p)) > 1:
+                shape = (n_times, -1, n_nodes)
+            else:
+                shape = (n_times, n_nodes)
+            h_to_point = vmap(
+                self.h_to_point,
+                in_axes=(None, 0, None, None)
+            )(
+                p, time, alpha, r_min
+            ).reshape(shape)
+            return h_to_point
+        if len(jnp.shape(p)) > 1:
+            h_to_point = vmap(
+                self.h_to_point,
+                in_axes=(0, None, None, None)
+            )(
+                p, time, alpha, r_min
+            ).reshape(-1, n_nodes)
+            return h_to_point
+        h_to_point = self._h_to_point(p, time, alpha, r_min)
         return h_to_point
 
-    @partial(jit, static_argnames=['self'])
     def h_to_self(self, time: Array, alpha: float):
         """Thermal response factors to its own nodes.
 
@@ -219,30 +229,68 @@ class Borehole:
         array
             (K, `n_nodes`, `n_nodes`,) array of thermal response factors.
         """
-        # Integrand of point heat source evaluated at borehole nodes
-        integrand = vmap(
-            lambda _eta: self._segment_point_heat_source(_eta, self.p, time, alpha, r_min=self.r_b),
-            in_axes=0,
-            out_axes=-1)
-        # Integral of the point heat source
         n_nodes = self.n_nodes
-        h_to_self = self.basis.quad_ts_nodes(
-            integrand
-        ).reshape(-1, n_nodes, n_nodes)
+        if len(jnp.shape(time)) > 0:
+            n_times = len(time)
+            h_to_self = vmap(
+                self.h_to_self,
+                in_axes=(0, None)
+            )(
+                time, alpha
+            )
+            return h_to_self
+        h_to_self = vmap(
+            self._h_to_node_on_self,
+            in_axes=(0, None, None)
+        )(
+            self.p, time, alpha
+        ).reshape(n_nodes, n_nodes)
         return h_to_self
 
     @partial(jit, static_argnames=['self'])
-    def _segment_point_heat_source(self, xi_p: float, p: Array, time: Array | float, alpha: float, r_min: float = 0.) -> Array:
-        """Point heat source solution along all segments of the borehole.
+    def _h_to_node_on_self(self, p: Array, time: float, alpha: float):
+        """Thermal response factors to its own nodes.
 
         Parameters
         ----------
-        xi_p : array
-            (N,) array of coordinates along segments.
         p : array
-            (M, 3,) array of positions.
-        time : array or float
-            (K,) array of times (in seconds).
+            (3,) array of the position of a node on the borehole at
+            which thermal response factors are evaluated.
+        time : float
+            Time (in seconds).
+        alpha : float
+            Ground thermal diffusivity (in m^2/s).
+
+        Returns
+        -------
+        array
+            (`n_nodes`,) array of thermal response factors.
+        """
+        def integrand(_eta: Array) -> Array:
+            """Integrand of point heat source evaluated at borehole nodes."""
+            integrand = vmap(
+                self._segment_point_heat_source,
+                in_axes=(0, None, None, None, None),
+                out_axes=-1
+            )(_eta, p, time, alpha, self.r_b)
+            return integrand
+        # Integral of the point heat source
+        h_to_node = self.basis.quad_ts_nodes(
+            integrand
+        ).flatten()
+        return h_to_node
+
+    @partial(jit, static_argnames=['self'])
+    def _h_to_point(self, p: Array, time: float, alpha: float, r_min: float = 0.):
+        """Thermal response factors to a point.
+
+        Parameters
+        ----------
+        p : array
+            (3,) array of the position at which thermal response factors
+            are evaluated.
+        time : float
+            Time (in seconds).
         alpha : float
             Ground thermal diffusivity (in m^2/s).
         r_min : float, default: ``0.``
@@ -252,16 +300,54 @@ class Borehole:
         Returns
         -------
         array
-            (K, M, N,) array of the point heat source solution. If `time`
-            is a ``float``, then ``K=0``.
+            (`n_nodes`,) array of thermal response factors.
+        """
+        def integrand(_eta: Array) -> Array:
+            """Integrand of point heat source."""
+            integrand = vmap(
+                self._segment_point_heat_source,
+                in_axes=(0, None, None, None, None),
+                out_axes=-1
+            )(_eta, p, time, alpha, r_min)
+            return integrand
+        # Integral of the point heat source
+        h_to_node = self.basis.quad_gl(
+            integrand, -1., 1.
+        ).flatten()
+        return h_to_node
+
+    def _segment_point_heat_source(self, xi_p: float, p: Array, time: float, alpha: float, r_min: float = 0.) -> Array:
+        """Point heat source solution along all segments of the borehole.
+
+        Parameters
+        ----------
+        xi_p : array
+            (N,) array of coordinates along segments.
+        p : array
+            (3,) array of positions.
+        time : float
+            Time (in seconds).
+        alpha : float
+            Ground thermal diffusivity (in m^2/s).
+        r_min : float, default: ``0.``
+            Minimum distance (in meters) added to the distance between the
+            heat source and the positions `p`.
+
+        Returns
+        -------
+        array
+            (N,) array of the point heat source solution.
         """
         # Coordinates (xi) of all sources at local segment coordinates (xi')
         xi = self.f_xi_sb(xi_p)
         p_source = self.path.f_p(xi)
         J = self.path.f_J(xi)
         # Point heat source solutions
-        h = point_heat_source(p_source, p, time, J, alpha, r_min=r_min) * self.segment_ratios
-        return h
+        h = vmap(
+            point_heat_source,
+            in_axes=(-2, None, None, 0, None, None)
+            )(p_source, p, time, J, alpha, r_min)
+        return h * self.segment_ratios
 
     @classmethod
     def from_dimensions(cls, L: float, D: float, r_b: float, x: float, y: float, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None) -> Self:
