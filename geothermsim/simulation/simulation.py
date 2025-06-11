@@ -260,6 +260,7 @@ class Simulation:
                         f'Elapsed time: {toc-tic:.2f} seconds.'
                     )
         if disp:
+            toc = perf_counter()
             print(
                 f'Simulation end. Elapsed time: {toc-tic:.2f} seconds.'
             )
