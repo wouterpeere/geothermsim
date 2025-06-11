@@ -28,9 +28,10 @@ def point_heat_source(p_source: Array, p: Array, time: Array | float, alpha: flo
     -------
     array or float
         (K, M, N,) array of values of the point heat source solution.
-        For each of the parameters `xi`, `p` and `time`, the
+        For each of the parameters `p_source`, `p` and `time`, the
         corresponding axis is removed if the parameter is supplied as
-        a ``float``.
+        a ``float`` (for `time`) or a 1d array (for `p_source` and
+        `p`).
 
     """
     if len(jnp.shape(time)) > 0:
