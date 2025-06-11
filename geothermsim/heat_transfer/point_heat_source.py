@@ -5,8 +5,7 @@ from jax.typing import ArrayLike
 from jax.scipy.special import erfc
 
 
-@jit
-def point_heat_source(p_source: Array, p: Array, time: Array | float, J: Array | float, alpha: float, r_min: float = 0.) -> Array | float:
+def point_heat_source(p_source: Array, p: Array, time: Array | float, alpha: float, r_min: float = 0.) -> Array | float:
     """Point heat source solution.
 
     Parameters
@@ -17,9 +16,6 @@ def point_heat_source(p_source: Array, p: Array, time: Array | float, J: Array |
     p : array
         (M, 3,) array of the positions at which the point heat source
         solution is evaluated.
-    J : array or float
-        (N,) array of the norm of the Jacobian of the positions of the
-        point heat sources along the trajectory.
     time : array or float
         (K,) array of times (in seconds).
     alpha : float
@@ -54,8 +50,29 @@ def point_heat_source(p_source: Array, p: Array, time: Array | float, J: Array |
         )(p_source, p, time, J, alpha, r_min)
     # Distance to the real point (p)
     r = jnp.sqrt(((p_source - p)**2).sum() + r_min**2)
-    # Distance to the mirror point (p')
-    r_mirror = jnp.linalg.norm(p_source - p * jnp.array([1, 1, -1]))
+    return _point_heat_source(r, time, alpha)
+
+
+@jit
+def _point_heat_source(r: float, time: float, alpha: float) -> float:
+    """Point heat source solution.
+
+    Parameters
+    ----------
+    r : float
+        Distance between the point source and the evaluation point (in
+        meters).
+    time : float
+        Time (in seconds).
+    alpha : float
+        Ground thermal diffusivity (in m^2/s).
+
+    Returns
+    -------
+    float
+        Point heat source solution.
+
+    """
     # Point heat source solution
-    h = 0.5 * J * erfc(r / jnp.sqrt(4 * alpha * time)) / r - 0.5 * J * erfc(r_mirror / jnp.sqrt(4 * alpha * time)) / r_mirror
+    h = 0.5 * erfc(r / jnp.sqrt(4 * alpha * time)) / r
     return h

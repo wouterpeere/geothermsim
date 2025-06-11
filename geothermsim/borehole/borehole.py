@@ -341,13 +341,20 @@ class Borehole:
         # Coordinates (xi) of all sources at local segment coordinates (xi')
         xi = self.f_xi_sb(xi_p)
         p_source = self.path.f_p(xi)
+        p_mirror = p * jnp.array([1, 1, -1], dtype=int)
         J = self.path.f_J(xi)
         # Point heat source solutions
-        h = vmap(
-            point_heat_source,
-            in_axes=(-2, None, None, 0, None, None)
-            )(p_source, p, time, J, alpha, r_min)
-        return h * self.segment_ratios
+        h = (
+            vmap(
+                point_heat_source,
+                in_axes=(-2, None, None, None, None)
+            )(p_source, p, time, alpha, r_min)
+            - vmap(
+                point_heat_source,
+                in_axes=(-2, None, None, None, None)
+            )(p_source, p_mirror, time, alpha, r_min)
+        )
+        return h * self.segment_ratios * J
 
     @classmethod
     def from_dimensions(cls, L: float, D: float, r_b: float, x: float, y: float, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None) -> Self:
