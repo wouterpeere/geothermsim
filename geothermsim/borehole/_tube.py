@@ -145,7 +145,11 @@ class _Tube(Borehole, ABC):
         """
         beta_ij = self._beta_ij(m_flow, cp_f)
         a = self._outlet_fluid_temperature_a_in(beta_ij)
-        b = self._heat_extraction_rate_a_in(self.xi, m_flow, cp_f, beta_ij) @ self.w
+        b = vmap(
+            self._heat_extraction_rate_a_in,
+            in_axes=(0, None, None, None),
+            out_axes=0
+        )(self.xi, m_flow, cp_f, beta_ij) @ self.w
         # Effective borehole thermal resistance
         R_b = -0.5 * self.L * (1. + a) / b
         return R_b
@@ -172,7 +176,8 @@ class _Tube(Borehole, ABC):
             temperature.
 
         """
-        return self._heat_extraction_rate(xi, m_flow, cp_f)
+        a_in, a_b = self._heat_extraction_rate(xi, m_flow, cp_f)
+        return a_in, a_b
 
     @partial(jit, static_argnames=['self'])
     def g_to_self(self, m_flow: float, cp_f: float) -> Tuple[Array, Array]:
@@ -187,7 +192,7 @@ class _Tube(Borehole, ABC):
 
         Returns
         -------
-        a_in : array or float
+        a_in : array
             (`n_nodes`,) array of coefficients for the inlet fluid
             temperature.
         a_b : array
@@ -195,7 +200,8 @@ class _Tube(Borehole, ABC):
             wall temperature.
 
         """
-        return self._heat_extraction_rate(self.xi, m_flow, cp_f)
+        a_in, a_b = self._heat_extraction_rate(self.xi, m_flow, cp_f)
+        return a_in, a_b
 
     @partial(jit, static_argnames=['self'])
     def fluid_temperature(self, xi: Array | float, T_f_in: float, T_b: Array, m_flow: float, cp_f: float) -> Array:
@@ -221,6 +227,7 @@ class _Tube(Borehole, ABC):
             (M, 2,) array of fluid temperatures (in degree Celsius).
 
         """
+        beta_ij = self._beta_ij(m_flow, cp_f)
         a_in, a_b = self._fluid_temperature(xi, m_flow, cp_f)
         T_f = a_in * T_f_in + a_b @ T_b
         return T_f
@@ -328,18 +335,30 @@ class _Tube(Borehole, ABC):
 
         """
         beta_ij = self._beta_ij(m_flow, cp_f)
-        a_in = self._fluid_temperature_a_in(xi, beta_ij)
-        a_b = self._fluid_temperature_a_b(xi, beta_ij)
+        if len(jnp.shape(xi)) > 0:
+            a_in = vmap(
+                self._fluid_temperature_a_in,
+                in_axes=(0, None),
+                out_axes=0
+            )(xi, beta_ij)
+            a_b = vmap(
+                self._fluid_temperature_a_b,
+                in_axes=(0, None),
+                out_axes=0
+            )(xi, beta_ij)
+        else:
+            a_in = self._fluid_temperature_a_in(xi, beta_ij)
+            a_b = self._fluid_temperature_a_b(xi, beta_ij)
         return a_in, a_b
 
     @abstractmethod
-    def _fluid_temperature_a_in(self, xi: Array | float, beta_ij: Array) -> Array:
+    def _fluid_temperature_a_in(self, xi: float, beta_ij: Array) -> Array:
         """Inlet coefficient to evaluate the fluid temperatures.
 
         Parameters
         ----------
-        xi : array or float
-            (M,) array of coordinates along the borehole.
+        xi : float
+            Coordinate along the borehole.
         beta_ij: array
             (`n_pipes`, `n_pipes`,) array of thermal conductance
             coefficients.
@@ -347,20 +366,20 @@ class _Tube(Borehole, ABC):
         Returns
         -------
         array
-            (M, `n_pipes`,) array of coefficients for the inlet fluid
+            (`n_pipes`,) array of coefficients for the inlet fluid
             temperature.
 
         """
         ...
 
     @abstractmethod
-    def _fluid_temperature_a_b(self, xi: Array | float, beta_ij: Array) -> Array:
+    def _fluid_temperature_a_b(self, xi: float, beta_ij: Array) -> Array:
         """Borehole wall coefficient to evaluate the fluid temperatures.
 
         Parameters
         ----------
-        xi : array or float
-            (M,) array of coordinates along the borehole.
+        xi : float
+            Coordinate along the borehole.
         beta_ij: array
             (`n_pipes`, `n_pipes`,) array of thermal conductance
             coefficients.
@@ -368,7 +387,7 @@ class _Tube(Borehole, ABC):
         Returns
         -------
         array
-            (M, `n_nodes`,) array of coefficients for the borehole wall
+            (`n_pipes`, `n_nodes`,) array of coefficients for the borehole wall
             temperature.
 
         """
@@ -396,17 +415,31 @@ class _Tube(Borehole, ABC):
 
         """
         beta_ij = self._beta_ij(m_flow, cp_f)
-        a_in = self._heat_extraction_rate_a_in(xi, m_flow, cp_f, beta_ij)
-        a_b = self._heat_extraction_rate_a_b(xi, m_flow, cp_f, beta_ij)
+        if len(jnp.shape(xi)) > 0:
+            a_in = vmap(
+                self._heat_extraction_rate_a_in,
+                in_axes=(0, None, None, None),
+                out_axes=0
+            )(xi, m_flow, cp_f, beta_ij)
+            a_b = vmap(
+                self._heat_extraction_rate_a_b,
+                in_axes=(0, None, None, None),
+                out_axes=0
+            )(xi, m_flow, cp_f, beta_ij)
+        else:
+            a_in = self._heat_extraction_rate_a_in(
+                xi, m_flow, cp_f, beta_ij)
+            a_b = self._heat_extraction_rate_a_b(
+                xi, m_flow, cp_f, beta_ij)
         return a_in, a_b
 
-    def _heat_extraction_rate_a_in(self, xi: Array | float, m_flow: float, cp_f: float, beta_ij: Array) -> Array | float:
+    def _heat_extraction_rate_a_in(self, xi: float, m_flow: float, cp_f: float, beta_ij: Array) -> float:
         """Inlet coefficient to evaluate the heat extraction rate.
 
         Parameters
         ----------
-        xi : array or float
-            (M,) array of coordinates along the borehole.
+        xi : float
+            Coordinate along the borehole.
         m_flow : float
             Fluid mass flow rate (in kg/s).
         cp_f : float
@@ -417,22 +450,24 @@ class _Tube(Borehole, ABC):
 
         Returns
         -------
-        array or float
-            (M,) array of coefficients for the inlet fluid temperature.
+        float
+            Coefficient for the inlet fluid temperature.
 
         """
         b_in = self._fluid_temperature_a_in(xi, beta_ij)
         R_d = 1 / (self._m_flow_factor * m_flow * cp_f * beta_ij)
-        a_in = -(b_in / jnp.diag(R_d)).sum(axis=1)
+        R_d_diag = jnp.diag(R_d)
+        G_d_diag = 1 / R_d_diag
+        a_in = -G_d_diag @ b_in
         return a_in
 
-    def _heat_extraction_rate_a_b(self, xi: Array | float, m_flow: float, cp_f: float, beta_ij: Array) -> Array:
+    def _heat_extraction_rate_a_b(self, xi: float, m_flow: float, cp_f: float, beta_ij: Array) -> Array:
         """Borehole wall coefficient to evaluate the heat extraction rate.
 
         Parameters
         ----------
         xi : array or float
-            (M,) array of coordinates along the borehole.
+            Coordinate along the borehole.
         m_flow : float
             Fluid mass flow rate (in kg/s).
         cp_f : float
@@ -443,14 +478,16 @@ class _Tube(Borehole, ABC):
         Returns
         -------
         array
-            (M, `n_nodes`,) array of coefficients for the borehole wall
+            (`n_nodes`,) array of coefficients for the borehole wall
             temperature.
 
         """
         b_b = self._fluid_temperature_a_b(xi, beta_ij)
         R_d = 1 / (self._m_flow_factor * m_flow * cp_f * beta_ij)
-        R_b = 1 / (1 / jnp.diag(R_d)).sum()
-        a_b = -(b_b / jnp.diag(R_d)[:, None]).sum(axis=1) + vmap(self.f_psi, in_axes=0)(xi) / R_b
+        R_d_diag = jnp.diag(R_d)
+        G_d_diag = 1 / R_d_diag
+        R_b = 1 / (1 / R_d_diag).sum()
+        a_b = -G_d_diag @ b_b + self.f_psi(xi) * G_d_diag.sum()
         return a_b
 
     def _outlet_fluid_temperature(self, m_flow: float, cp_f: float) -> Tuple[float, Array]:

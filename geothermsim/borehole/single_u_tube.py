@@ -66,13 +66,13 @@ class SingleUTube(_Tube):
 
     """
 
-    def _fluid_temperature_a_in(self, xi: Array | float, beta_ij: Array) -> Array:
+    def _fluid_temperature_a_in(self, xi: float, beta_ij: Array) -> Array:
         """Inlet coefficient to evaluate the fluid temperatures.
 
         Parameters
         ----------
-        xi : array or float
-            (M,) array of coordinates along the borehole.
+        xi : float
+            Coordinate along the borehole.
         beta_ij: array
             (`n_pipes`, `n_pipes`,) array of thermal conductance
             coefficients.
@@ -80,7 +80,7 @@ class SingleUTube(_Tube):
         Returns
         -------
         array
-            (M, `n_pipes`,) array of coefficients for the inlet fluid
+            (`n_pipes`,) array of coefficients for the inlet fluid
             temperature.
 
         """
@@ -90,13 +90,13 @@ class SingleUTube(_Tube):
         a_in = c_in + b_in * c_out
         return a_in
 
-    def _fluid_temperature_a_b(self, xi: Array | float, beta_ij: Array) -> Array:
+    def _fluid_temperature_a_b(self, xi: float, beta_ij: Array) -> Array:
         """Borehole wall coefficient to evaluate the fluid temperatures.
 
         Parameters
         ----------
-        xi : array or float
-            (M,) array of coordinates along the borehole.
+        xi : float
+            Coordinate along the borehole.
         beta_ij: array
             (`n_pipes`, `n_pipes`,) array of thermal conductance
             coefficients.
@@ -104,149 +104,104 @@ class SingleUTube(_Tube):
         Returns
         -------
         array
-            (M, `n_nodes`,) array of coefficients for the borehole wall
-            temperature.
+            (`n_pipes`, `n_nodes`,) array of coefficients for the
+            borehole wall temperature.
 
         """
         b_b = self._outlet_fluid_temperature_a_b(beta_ij)
         c_out = self._general_solution_a_out(xi, beta_ij)
         c_b = self._general_solution_a_b(xi, beta_ij)
-        a_b = c_b + vmap(jnp.outer, in_axes=(0, None))(c_out, b_b)
+        a_b = c_b + jnp.outer(c_out, b_b)
         return a_b
 
-    def _general_solution(self, xi: Array | float, m_flow: float, cp_f: float) -> Tuple[Array, Array, Array]:
-        """Coefficients to evaluate the general solution.
-
-        Parameters
-        ----------
-        xi : array or float
-            (M,) array of coordinates along the borehole.
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
-
-        Returns
-        -------
-        a_in : array or float
-            (M, `n_pipes`,) array of coefficients for the inlet fluid
-            temperature.
-        a_out : array or float
-            (M, `n_pipes`,) array of coefficients for the outlet fluid
-            temperature.
-        a_b : array
-            (M, `n_pipes`, `n_nodes`,) array of coefficients for the
-            borehole wall temperature.
-
-        """
-        beta_ij = self._beta_ij(m_flow, cp_f)
-        a_in = self._general_solution_a_in(xi, beta_ij)
-        a_out = self._general_solution_a_out(xi, beta_ij)
-        a_b = self._general_solution_a_b(xi, beta_ij)
-        return a_in, a_out, a_b
-
-    def _general_solution_a_in(self, xi: Array | float, beta_ij: Array) -> Array:
+    def _general_solution_a_in(self, xi: float, beta_ij: Array) -> Array:
         """Inlet coefficient to evaluate the general solution.
 
         Parameters
         ----------
-        xi : array or float
-            (M,) array of coordinates along the borehole.
-        beta_ij: array
-            (2, 2,) array of thermal conductance coefficients.
-
-        Returns
-        -------
-        array or float
-            (M, 2,) array of coefficients for the inlet fluid temperature.
-
-        """
-        s = self.path.f_s(xi)
-        a_in = jnp.stack(
-            (
-                self._f1(s, beta_ij),
-                -self._f2(s, beta_ij)
-            ),
-            axis=-1
-        )
-        return a_in
-
-    def _general_solution_a_out(self, xi: Array | float, beta_ij: Array) -> Array:
-        """Outlet coefficient to evaluate the general solution.
-
-        Parameters
-        ----------
-        xi : array or float
-            (M,) array of coordinates along the borehole.
-        beta_ij: array
-            (2, 2,) array of thermal conductance coefficients.
-
-        Returns
-        -------
-        array or float
-            (M, 2,) array of coefficients for the outlet fluid
-            temperature.
-
-        """
-        s = self.path.f_s(xi)
-        a_out = jnp.stack(
-            (
-                self._f2(s, beta_ij),
-                self._f3(s, beta_ij)
-            ),
-            axis=-1
-        )
-        return a_out
-
-    def _general_solution_a_b(self, xi: Array | float, beta_ij: Array) -> Array:
-        """Borehole wall coefficient to evaluate the general solution.
-
-        Parameters
-        ----------
-        xi : array or float
-            (M,) array of coordinates along the borehole.
+        xi : float
+            Coordinate along the borehole.
         beta_ij: array
             (2, 2,) array of thermal conductance coefficients.
 
         Returns
         -------
         array
-            (M, 2, `n_nodes`,) array of coefficients for the borehole wall
+            (2,) array of coefficients for the inlet fluid temperature.
+
+        """
+        s = self.path.f_s(xi)
+        a_in = jnp.array(
+            [self._f1(s, beta_ij), -self._f2(s, beta_ij)]
+        )
+        return a_in
+
+    def _general_solution_a_out(self, xi: float, beta_ij: Array) -> Array:
+        """Outlet coefficient to evaluate the general solution.
+
+        Parameters
+        ----------
+        xi : float
+            Coordinate along the borehole.
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
+
+        Returns
+        -------
+        array
+            (2,) array of coefficients for the outlet fluid
             temperature.
 
         """
-        if len(jnp.shape(xi)) == 1:
-            a_b = vmap(
-                self._general_solution_a_b,
-                in_axes=(0, None)
-            )(xi, beta_ij)
-        else:
-            s = self.path.f_s(xi)
-            f1 = lambda _eta: self._f4(s - self.path.f_s(_eta), beta_ij) * self.path.f_J(_eta)
-            f2 = lambda _eta: -self._f5(s - self.path.f_s(_eta), beta_ij) * self.path.f_J(_eta)
-            high = jnp.maximum(-1., jnp.minimum(1., self.f_xi_bs(xi)))
-            a, b = self.xi_edges[:-1], self.xi_edges[1:]
-            f_xi_bs = lambda _eta, _a, _b: 0.5 * (_b + _a) + 0.5 * _eta * (_b - _a)
-            integrand = lambda _eta, _a, _b, _ratio: jnp.stack(
-                [
-                    f1(f_xi_bs(_eta, _a, _b)) * _ratio,
-                    f2(f_xi_bs(_eta, _a, _b)) * _ratio,
-                ]
+        s = self.path.f_s(xi)
+        a_out = jnp.array(
+            [self._f2(s, beta_ij), self._f3(s, beta_ij)]
+        )
+        return a_out
+
+    def _general_solution_a_b(self, xi: float, beta_ij: Array) -> Array:
+        """Borehole wall coefficient to evaluate the general solution.
+
+        Parameters
+        ----------
+        xi : float
+            Coordinate along the borehole.
+        beta_ij: array
+            (2, 2,) array of thermal conductance coefficients.
+
+        Returns
+        -------
+        array
+            (2, `n_nodes`,) array of coefficients for the borehole wall
+            temperature.
+
+        """
+        s = self.path.f_s(xi)
+        f1 = lambda _eta: self._f4(s - self.path.f_s(_eta), beta_ij) * self.path.f_J(_eta)
+        f2 = lambda _eta: -self._f5(s - self.path.f_s(_eta), beta_ij) * self.path.f_J(_eta)
+        high = jnp.maximum(-1., jnp.minimum(1., self.f_xi_bs(xi)))
+        a, b = self.xi_edges[:-1], self.xi_edges[1:]
+        f_xi_bs = lambda _eta, _a, _b: 0.5 * (_b + _a) + 0.5 * _eta * (_b - _a)
+        integrand = lambda _eta, _a, _b, _ratio: jnp.stack(
+            [
+                f1(f_xi_bs(_eta, _a, _b)) * _ratio,
+                f2(f_xi_bs(_eta, _a, _b)) * _ratio,
+            ]
+        )
+        integral = lambda _a, _b, _ratio, _high: self.basis.quad_gl(
+                vmap(
+                    lambda _eta: integrand(_eta, _a, _b, _ratio),
+                    in_axes=0,
+                    out_axes=-1
+                ),
+            -1.,
+            _high
             )
-            integral = lambda _a, _b, _ratio, _high: self.basis.quad_gl(
-                    vmap(
-                        lambda _eta: integrand(_eta, _a, _b, _ratio),
-                        in_axes=0,
-                        out_axes=-1
-                    ),
-                -1.,
-                _high
-                )
-            a_b = vmap(
-                    integral,
-                    in_axes=(0, 0, 0, 0),
-                    out_axes=1
-                )(a, b, self.segment_ratios, high).reshape(2, self.n_nodes)
+        a_b = vmap(
+                integral,
+                in_axes=(0, 0, 0, 0),
+                out_axes=1
+            )(a, b, self.segment_ratios, high).reshape(2, self.n_nodes)
         return a_b
 
     def _outlet_fluid_temperature_a_in(self, beta_ij: Array) -> float:

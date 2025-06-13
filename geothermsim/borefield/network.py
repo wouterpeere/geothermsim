@@ -70,13 +70,12 @@ class Network(Borefield):
             Effective borefield thermal resistance (in m-K/W).
 
         """
+        m_flow_borehole = self.m_flow_borehole(m_flow)
         a = jnp.average(
-            self._outlet_fluid_temperature(m_flow, cp_f)[0],
-            weights=jnp.broadcast_to(
-                m_flow, self.n_boreholes
-            )
+            self._outlet_fluid_temperature(m_flow_borehole, cp_f)[0],
+            weights=m_flow_borehole
         )
-        b = jnp.sum(self._heat_extraction_rate(self.xi, m_flow, cp_f)[0] * self.w)
+        b = jnp.sum(self._heat_extraction_rate(self.xi, m_flow_borehole, cp_f)[0] * self.w)
         # Effective borehole thermal resistance
         R_field = -0.5 * self.L.sum() * (1. + a) / b
         return R_field
@@ -105,7 +104,14 @@ class Network(Borefield):
             borehole wall temperatures.
 
         """
-        return self._heat_extraction_rate(xi, m_flow, cp_f)
+        m_flow_borehole = self.m_flow_borehole(m_flow)
+        a_in, a_b = zip(*[
+            borehole.g(xi, _m_flow, cp_f)
+            for borehole, _m_flow in zip(self.boreholes, m_flow_borehole)
+        ])
+        a_in = jnp.stack(a_in, axis=0)
+        a_b = jnp.stack(a_b, axis=0)
+        return a_in, a_b
 
     @partial(jit, static_argnames=['self'])
     def g_to_self(self, m_flow: float | Array, cp_f: float) -> Array:
@@ -129,7 +135,14 @@ class Network(Borefield):
             for the borehole wall temperatures.
 
         """
-        return self._heat_extraction_rate(self.xi, m_flow, cp_f)
+        m_flow_borehole = self.m_flow_borehole(m_flow)
+        a_in, a_b = zip(*[
+            borehole.g_to_self(_m_flow, cp_f)
+            for borehole, _m_flow in zip(self.boreholes, m_flow_borehole)
+        ])
+        a_in = jnp.stack(a_in, axis=0)
+        a_b = jnp.stack(a_b, axis=0)
+        return a_in, a_b
 
     @partial(jit, static_argnames=['self'])
     def fluid_temperature(self, xi: Array | float, T_f_in: float, T_b: Array, m_flow: float | Array, cp_f: float) -> Array:
@@ -157,8 +170,14 @@ class Network(Borefield):
             Celsius).
 
         """
-        a_in, a_b = self._fluid_temperature(xi, m_flow, cp_f)
-        T_f = a_in * T_f_in + vmap(jnp.dot, in_axes=(0, 0), out_axes=0)(a_b, T_b)
+        m_flow_borehole = self.m_flow_borehole(m_flow)
+        T_f = jnp.stack(
+            [
+                borehole.fluid_temperature(xi, T_f_in, _T_b, _m_flow, cp_f)
+                for borehole, (_T_b, _m_flow) in zip(self.boreholes, T_b, m_flow_borehole)
+                ],
+            axis=0
+        )
         return T_f
 
     @partial(jit, static_argnames=['self'])
@@ -187,8 +206,14 @@ class Network(Borefield):
             `xi` is a ``float``, then ``M=0``.
 
         """
-        a_in, a_b = self._heat_extraction_rate(xi, m_flow, cp_f)
-        q = a_in * T_f_in + vmap(jnp.dot, in_axes=(0, 0), out_axes=0)(a_b, T_b)
+        m_flow_borehole = self.m_flow_borehole(m_flow)
+        q = jnp.stack(
+            [
+                borehole.heat_extraction_rate(xi, T_f_in, _T_b, _m_flow, cp_f)
+                for borehole, (_T_b, _m_flow) in zip(self.boreholes, T_b, m_flow_borehole)
+                ],
+            axis=0
+        )
         return q
 
     @partial(jit, static_argnames=['self'])
@@ -215,7 +240,23 @@ class Network(Borefield):
             (in W/m). If `xi` is a ``float``, then ``M=0``.
 
         """
-        return self.heat_extraction_rate(self.xi, T_f_in, T_b, m_flow, cp_f)
+        m_flow_borehole = self.m_flow_borehole(m_flow)
+        q = jnp.stack(
+            [
+                borehole.heat_extraction_rate_to_self(T_f_in, _T_b, _m_flow, cp_f)
+                for borehole, (_T_b, _m_flow) in zip(self.boreholes, T_b, m_flow_borehole)
+                ],
+            axis=0
+        )
+        return q
+
+    def m_flow_borehole(self, m_flow: float | Array) -> Array:
+        if len(jnp.shape(m_flow)) == 0 or jnp.shape(m_flow)[0] == 1:
+            m_flow = jnp.broadcast_to(
+                m_flow / self.n_boreholes,
+                self.n_boreholes
+            )
+        return m_flow
 
     @partial(jit, static_argnames=['self'])
     def outlet_fluid_temperature(self, T_f_in: float, T_b: Array, m_flow: float | Array, cp_f: float) -> Array:
@@ -241,8 +282,15 @@ class Network(Borefield):
             Celsius).
 
         """
-        a_in, a_b = self._outlet_fluid_temperature(m_flow, cp_f)
-        T_f_out = a_in * T_f_in + vmap(jnp.dot, in_axes=(0, 0), out_axes=0)(a_b, T_b)
+        m_flow_borehole = self.m_flow_borehole(m_flow)
+        m_flow_network = jnp.sum(m_flow)
+        T_f_out = jnp.stack(
+            [
+                borehole.outlet_fluid_temperature(T_f_in, _T_b, _m_flow, cp_f)
+                for borehole, (_T_b, _m_flow) in zip(self.boreholes, T_b, m_flow_borehole)
+                ],
+            axis=0
+        ) @ m_flow_borehole / m_flow_network
         return T_f_out
 
     def _fluid_temperature(self, xi: Array | float, m_flow: float | Array, cp_f: float) -> Tuple[Array, Array]:
@@ -268,14 +316,10 @@ class Network(Borefield):
             the borehole wall temperature.
 
         """
-        if len(jnp.shape(m_flow)) == 0 or jnp.shape(m_flow)[0] == 1:
-            m_flow = jnp.broadcast_to(
-                m_flow / self.n_boreholes,
-                self.n_boreholes
-            )
+        m_flow_borehole = self.m_flow_borehole(m_flow)
         a_in, a_b = zip(*[
             borehole._fluid_temperature(xi, _m_flow, cp_f)
-            for borehole, _m_flow in zip(self.boreholes, m_flow)
+            for borehole, _m_flow in zip(self.boreholes, m_flow_borehole)
         ])
         a_in = jnp.stack(a_in, axis=0)
         a_b = jnp.stack(a_b, axis=0)
@@ -304,14 +348,10 @@ class Network(Borefield):
             borehole wall temperature.
 
         """
-        if len(jnp.shape(m_flow)) == 0 or jnp.shape(m_flow)[0] == 1:
-            m_flow = jnp.broadcast_to(
-                m_flow / self.n_boreholes,
-                self.n_boreholes
-            )
+        m_flow_borehole = self.m_flow_borehole(m_flow)
         a_in, a_b = zip(*[
             borehole._heat_extraction_rate(xi, _m_flow, cp_f)
-            for borehole, _m_flow in zip(self.boreholes, m_flow)
+            for borehole, _m_flow in zip(self.boreholes, m_flow_borehole)
         ])
         a_in = jnp.stack(a_in, axis=0)
         a_b = jnp.stack(a_b, axis=0)
@@ -338,14 +378,10 @@ class Network(Borefield):
             borehole wall temperature.
 
         """
-        if len(jnp.shape(m_flow)) == 0 or jnp.shape(m_flow)[0] == 1:
-            m_flow = jnp.broadcast_to(
-                m_flow / self.n_boreholes,
-                self.n_boreholes
-            )
+        m_flow_borehole = self.m_flow_borehole(m_flow)
         a_in, a_b = zip(*[
             borehole._outlet_fluid_temperature(_m_flow, cp_f)
-            for borehole, _m_flow in zip(self.boreholes, m_flow)
+            for borehole, _m_flow in zip(self.boreholes, m_flow_borehole)
         ])
         a_in = jnp.stack(a_in, axis=0)
         a_b = jnp.stack(a_b, axis=0)
