@@ -176,32 +176,52 @@ class SingleUTube(_Tube):
             temperature.
 
         """
-        s = self.path.f_s(xi)
-        f1 = lambda _eta: self._f4(s - self.path.f_s(_eta), beta_ij) * self.path.f_J(_eta)
-        f2 = lambda _eta: -self._f5(s - self.path.f_s(_eta), beta_ij) * self.path.f_J(_eta)
+        # Longitudinal position to evaluate the solution
+        s_xi = self.path.f_s(xi)
+        # Upper bound of integration along each segment
         high = jnp.maximum(-1., jnp.minimum(1., self.f_xi_bs(xi)))
+        # Coordinates of the top and bottom edges of the segments
         a, b = self.xi_edges[:-1], self.xi_edges[1:]
-        f_xi_bs = lambda _eta, _a, _b: 0.5 * (_b + _a) + 0.5 * _eta * (_b - _a)
-        integrand = lambda _eta, _a, _b, _ratio: jnp.stack(
+
+        def f_xi_sb(_zeta_p: float, _a: float, _b: float) -> float:
+            """Borehole coordinate from segment coordinate and edges"""
+            return 0.5 * (_b + _a) + 0.5 * _zeta_p * (_b - _a)
+
+        def integral_f4(_a: float, _b: float, _high: float, _ratio: float) -> Array:
+            """Integral involving the function f4."""
+            def integrand_f4(_zeta_p: float) -> float:
+                """Integrand involving the function f4."""
+                _eta = f_xi_sb(_zeta_p, _a, _b)
+                s_eta = self.path.f_s(_eta)
+                return self._f4(s_xi - s_eta, beta_ij) * self.path.f_J(_eta)
+
+            return self.basis.quad_gl(integrand_f4, -1, _high) * _ratio
+
+        def integral_f5(_a: float, _b: float, _high: float, _ratio: float) -> Array:
+            """Integral involving the function f5."""
+            def integrand_f5(_zeta_p: float) -> float:
+                """Integrand involving the function f5."""
+                _eta = f_xi_sb(_zeta_p, _a, _b)
+                s_eta = self.path.f_s(_eta)
+                return -self._f5(s_xi - s_eta, beta_ij) * self.path.f_J(_eta)
+
+            return self.basis.quad_gl(integrand_f5, -1, _high) * _ratio
+
+        a_b = jnp.stack(
             [
-                f1(f_xi_bs(_eta, _a, _b)) * _ratio,
-                f2(f_xi_bs(_eta, _a, _b)) * _ratio,
-            ]
-        )
-        integral = lambda _a, _b, _ratio, _high: self.basis.quad_gl(
                 vmap(
-                    lambda _eta: integrand(_eta, _a, _b, _ratio),
-                    in_axes=0,
-                    out_axes=-1
-                ),
-            -1.,
-            _high
-            )
-        a_b = vmap(
-                integral,
-                in_axes=(0, 0, 0, 0),
-                out_axes=1
-            )(a, b, self.segment_ratios, high).reshape(2, self.n_nodes)
+                    integral_f4,
+                    in_axes=(0, 0, 0, 0),
+                    out_axes=0
+                )(a, b, high, self.segment_ratios),
+                vmap(
+                    integral_f5,
+                    in_axes=(0, 0, 0, 0),
+                    out_axes=0
+                )(a, b, high, self.segment_ratios)
+            ],
+            axis=0
+        ).reshape(self.n_pipes, self.n_nodes)
         return a_b
 
     def _outlet_fluid_temperature_a_in(self, beta_ij: Array) -> float:
@@ -237,18 +257,39 @@ class SingleUTube(_Tube):
             temperature.
 
         """
+        # Borehole length
         L = self.L
-        f = vmap(
-            lambda _eta: (
-                self._f4(L - self.path.f_s(self.f_xi_sb(_eta)), beta_ij)
-                + self._f5(L - self.path.f_s(self.f_xi_sb(_eta)), beta_ij)
-            ) / (
-                self._f3(L, beta_ij)
-                - self._f2(L, beta_ij)
-            ) * self.path.f_J(self.f_xi_sb(_eta)) * self.segment_ratios,
-            in_axes=0,
-            out_axes=-1)
-        a_b = self.basis.quad_gl(f, -1, 1.).flatten()
+        # Coordinates of the top and bottom edges of the segments
+        a, b = self.xi_edges[:-1], self.xi_edges[1:]
+
+        def f_xi_sb(_eta_p: float, _a: float, _b: float) -> float:
+            """Borehole coordinate from segment coordinate and edges"""
+            return 0.5 * (_b + _a) + 0.5 * _eta_p * (_b - _a)
+
+        one_over_f3_minus_f2 = 1 / (self._f3(L, beta_ij) - self._f2(L, beta_ij))
+        def integral_outlet_fluid_temperature(_a: float, _b: float, _ratio: float):
+            """Integral for the evaluation of the outlet fluid temperature."""
+            def integrand_outlet_fluid_temperature(_eta_p: float):
+                """Integrand for the evaluation of the outlet fluid temperature."""
+                _eta = f_xi_sb(_eta_p, _a, _b)
+                s_eta = self.path.f_s(_eta)
+                J_eta = self.path.f_J(_eta)
+                integrand = one_over_f3_minus_f2 * J_eta * (
+                    self._f4(L - s_eta, beta_ij)
+                    + self._f5(L - s_eta, beta_ij)
+                    )
+                return integrand
+
+            integral = self.basis.quad_gl(
+                integrand_outlet_fluid_temperature, -1, 1
+            ) * _ratio
+            return integral
+
+        a_b = vmap(
+            integral_outlet_fluid_temperature,
+            in_axes=(0, 0, 0),
+            out_axes=0
+            )(a, b, self.segment_ratios)
         return a_b
 
     @staticmethod
