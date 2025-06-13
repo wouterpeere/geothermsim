@@ -251,7 +251,8 @@ class SingleUTube(_Tube):
         a_b = self.basis.quad_gl(f, -1, 1.).flatten()
         return a_b
 
-    def _beta(self, beta_ij: Array) -> float:
+    @staticmethod
+    def _beta(beta_ij: Array) -> float:
         """Coefficient ``beta`` from Hellström (1991).
 
         Parameters
@@ -269,7 +270,8 @@ class SingleUTube(_Tube):
         beta = 0.5 * (beta2 - beta1)
         return beta
 
-    def _gamma(self, beta_ij: Array) -> float:
+    @staticmethod
+    def _gamma(beta_ij: Array) -> float:
         """Coefficient ``gamma`` from Hellström (1991).
 
         Parameters
@@ -288,7 +290,8 @@ class SingleUTube(_Tube):
         gamma = jnp.sqrt(0.25 * (beta1 + beta2)**2 + beta12 * (beta1 + beta2))
         return gamma
 
-    def _delta(self, beta_ij: Array) -> float:
+    @staticmethod
+    def _delta(beta_ij: Array) -> float:
         """Coefficient ``delta`` from Hellström (1991).
 
         Parameters
@@ -304,11 +307,13 @@ class SingleUTube(_Tube):
         beta1 = beta_ij[0, 0]
         beta2 = beta_ij[1, 1]
         beta12 = beta_ij[0, 1]
-        gamma = self._gamma(beta_ij)
+        gamma = SingleUTube._gamma(beta_ij)
         delta = 1. / gamma * (beta12 + 0.5 * (beta1 + beta2))
         return delta
 
-    def _f1(self, s: Array | float, beta_ij: Array) -> Array | float:
+    @staticmethod
+    @jit
+    def _f1(s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f1`` from Hellström (1991).
 
         Parameters
@@ -324,13 +329,15 @@ class SingleUTube(_Tube):
             (M,) array.
 
         """
-        beta = self._beta(beta_ij)
-        gamma = self._gamma(beta_ij)
-        delta = self._delta(beta_ij)
+        beta = SingleUTube._beta(beta_ij)
+        gamma = SingleUTube._gamma(beta_ij)
+        delta = SingleUTube._delta(beta_ij)
         f1 = jnp.exp(beta * s) * (jnp.cosh(gamma * s) - delta * jnp.sinh(gamma * s))
         return f1
 
-    def _f2(self, s: Array | float, beta_ij: Array) -> Array | float:
+    @staticmethod
+    @jit
+    def _f2(s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f2`` from Hellström (1991).
 
         Parameters
@@ -346,13 +353,15 @@ class SingleUTube(_Tube):
             (M,) array.
 
         """
-        beta = self._beta(beta_ij)
-        gamma = self._gamma(beta_ij)
+        beta = SingleUTube._beta(beta_ij)
+        gamma = SingleUTube._gamma(beta_ij)
         beta12 = beta_ij[0, 1]
         f2 = jnp.exp(beta * s) * beta12 / gamma * jnp.sinh(gamma * s)
         return f2
 
-    def _f3(self, s: Array | float, beta_ij: Array) -> Array | float:
+    @staticmethod
+    @jit
+    def _f3(s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f3`` from Hellström (1991).
 
         Parameters
@@ -368,13 +377,15 @@ class SingleUTube(_Tube):
             (M,) array.
 
         """
-        beta = self._beta(beta_ij)
-        gamma = self._gamma(beta_ij)
-        delta = self._delta(beta_ij)
+        beta = SingleUTube._beta(beta_ij)
+        gamma = SingleUTube._gamma(beta_ij)
+        delta = SingleUTube._delta(beta_ij)
         f3 = jnp.exp(beta * s) * (jnp.cosh(gamma * s) + delta * jnp.sinh(gamma * s))
         return f3
 
-    def _f4(self, s: Array | float, beta_ij: Array) -> Array | float:
+    @staticmethod
+    @jit
+    def _f4(s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f4`` from Hellström (1991).
 
         Parameters
@@ -393,13 +404,15 @@ class SingleUTube(_Tube):
         beta1 = beta_ij[0, 0]
         beta2 = beta_ij[1, 1]
         beta12 = beta_ij[0, 1]
-        beta = self._beta(beta_ij)
-        gamma = self._gamma(beta_ij)
-        delta = self._delta(beta_ij)
+        beta = SingleUTube._beta(beta_ij)
+        gamma = SingleUTube._gamma(beta_ij)
+        delta = SingleUTube._delta(beta_ij)
         f4 = jnp.exp(beta * s) * (beta1 * jnp.cosh(gamma * s) - (delta * beta1 + beta2 * beta12 / gamma) * jnp.sinh(gamma * s))
         return f4
 
-    def _f5(self, s: Array | float, beta_ij: Array) -> Array | float:
+    @staticmethod
+    @jit
+    def _f5(s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f5`` from Hellström (1991).
 
         Parameters
@@ -418,8 +431,8 @@ class SingleUTube(_Tube):
         beta1 = beta_ij[0, 0]
         beta2 = beta_ij[1, 1]
         beta12 = beta_ij[0, 1]
-        beta = self._beta(beta_ij)
-        gamma = self._gamma(beta_ij)
-        delta = self._delta(beta_ij)
+        beta = SingleUTube._beta(beta_ij)
+        gamma = SingleUTube._gamma(beta_ij)
+        delta = SingleUTube._delta(beta_ij)
         f5 = jnp.exp(beta * s) * (beta2 * jnp.cosh(gamma * s) + (delta * beta2 + beta1 * beta12 / gamma) * jnp.sinh(gamma * s))
         return f5
