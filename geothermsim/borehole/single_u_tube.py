@@ -64,9 +64,9 @@ class SingleUTube(_Tube):
 
     """
 
-    @staticmethod
-    @jit
-    def _fluid_temperature_a_in(xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array) -> Array:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _fluid_temperature_a_in(cls, xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array) -> Array:
         """Inlet coefficient to evaluate the fluid temperatures.
 
         Parameters
@@ -98,18 +98,18 @@ class SingleUTube(_Tube):
             temperature.
 
         """
-        b_in = SingleUTube._outlet_fluid_temperature_a_in(
+        b_in = cls._outlet_fluid_temperature_a_in(
             beta_ij, top_connectivity, None, s_coefs)
-        c_in = SingleUTube._general_solution_a_in(
+        c_in = cls._general_solution_a_in(
             xi_p, index, beta_ij, s_coefs)
-        c_out = SingleUTube._general_solution_a_out(
+        c_out = cls._general_solution_a_out(
             xi_p, index, beta_ij, s_coefs)
         a_in = c_in + b_in * c_out
         return a_in
 
-    @staticmethod
-    @jit
-    def _fluid_temperature_a_b(xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _fluid_temperature_a_b(cls, xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
         """Borehole wall coefficient to evaluate the fluid temperatures.
 
         Parameters
@@ -154,18 +154,18 @@ class SingleUTube(_Tube):
             borehole wall temperature.
 
         """
-        b_b = SingleUTube._outlet_fluid_temperature_a_b(
+        b_b = cls._outlet_fluid_temperature_a_b(
             beta_ij, top_connectivity, None, s_coefs, J_coefs, psi_coefs, x, w)
-        c_out = SingleUTube._general_solution_a_out(
+        c_out = cls._general_solution_a_out(
             xi_p, index, beta_ij, s_coefs)
-        c_b = SingleUTube._general_solution_a_b(
+        c_b = cls._general_solution_a_b(
             xi_p, index, beta_ij, s_coefs, J_coefs, psi_coefs, x, w)
         a_b = c_b + jnp.outer(c_out, b_b)
         return a_b
 
-    @staticmethod
-    @jit
-    def _general_solution_a_in(xi_p: float, index: int, beta_ij: Array, s_coefs: Array) -> Array:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _general_solution_a_in(cls, xi_p: float, index: int, beta_ij: Array, s_coefs: Array) -> Array:
         """Inlet coefficient to evaluate the general solution.
 
         Parameters
@@ -187,15 +187,15 @@ class SingleUTube(_Tube):
             (2,) array of coefficients for the inlet fluid temperature.
 
         """
-        s = SingleUTube._longitudinal_position(xi_p, index, s_coefs)
+        s = cls._longitudinal_position(xi_p, index, s_coefs)
         a_in = jnp.array(
-            [SingleUTube._f1(s, beta_ij), -SingleUTube._f2(s, beta_ij)]
+            [cls._f1(s, beta_ij), -cls._f2(s, beta_ij)]
         )
         return a_in
 
-    @staticmethod
-    @jit
-    def _general_solution_a_out(xi_p: float, index: int, beta_ij: Array, s_coefs: Array) -> Array:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _general_solution_a_out(cls, xi_p: float, index: int, beta_ij: Array, s_coefs: Array) -> Array:
         """Outlet coefficient to evaluate the general solution.
 
         Parameters
@@ -218,15 +218,15 @@ class SingleUTube(_Tube):
             temperature.
 
         """
-        s = SingleUTube._longitudinal_position(xi_p, index, s_coefs)
+        s = cls._longitudinal_position(xi_p, index, s_coefs)
         a_out = jnp.array(
-            [SingleUTube._f2(s, beta_ij), SingleUTube._f3(s, beta_ij)]
+            [cls._f2(s, beta_ij), cls._f3(s, beta_ij)]
         )
         return a_out
 
-    @staticmethod
-    @jit
-    def _general_solution_a_b(xi_p: float, index: int, beta_ij: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _general_solution_a_b(cls, xi_p: float, index: int, beta_ij: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
         """Borehole wall coefficient to evaluate the general solution.
 
         Parameters
@@ -268,7 +268,7 @@ class SingleUTube(_Tube):
         n_nodes = jnp.shape(psi_coefs)[0]
         a_b = jnp.zeros((n_pipes, n_segments, n_nodes))
         # Longitudinal position corresponding to coordinate `xi_p`
-        s = SingleUTube._longitudinal_position(xi_p, index, s_coefs)
+        s = cls._longitudinal_position(xi_p, index, s_coefs)
 
         def _integral(_i: int, _factor: float) -> Array:
             """Integrals over a portion of a segment."""
@@ -277,8 +277,8 @@ class SingleUTube(_Tube):
             _w = _factor * w
             # Longitudinal positions, norms of Jacobian and basis functions
             # at integration points
-            _t = SingleUTube._longitudinal_position(_x, _i, s_coefs)
-            _J = SingleUTube._norm_of_jacobian(_x, _i, J_coefs)
+            _t = cls._longitudinal_position(_x, _i, s_coefs)
+            _J = cls._norm_of_jacobian(_x, _i, J_coefs)
             _psi = vmap(
                 Basis._f_psi,
                 in_axes=(0, None),
@@ -286,9 +286,9 @@ class SingleUTube(_Tube):
             )(_x, psi_coefs)
 
             # Integral of the function f4
-            _integrand_f4 = _J * SingleUTube._f4(s - _t, beta_ij)
+            _integrand_f4 = _J * cls._f4(s - _t, beta_ij)
             # Integral of the function f5
-            _integrand_f5 = -_J * SingleUTube._f5(s - _t, beta_ij)
+            _integrand_f5 = -_J * cls._f5(s - _t, beta_ij)
             _a_b = jnp.stack([(_integrand_f4 * _psi) @ _w, (_integrand_f5 * _psi) @ _w])
             return _a_b
 
@@ -312,9 +312,9 @@ class SingleUTube(_Tube):
 
         return a_b.reshape(n_pipes, -1)
 
-    @staticmethod
-    @jit
-    def _outlet_fluid_temperature_a_in(beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array) -> float:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _outlet_fluid_temperature_a_in(cls, beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array) -> float:
         """Inlet coefficient to evaluate the outlet fluid temperature.
 
         Parameters
@@ -346,15 +346,15 @@ class SingleUTube(_Tube):
 
         """
         n_segments = jnp.shape(s_coefs)[1]
-        L = SingleUTube._longitudinal_position(1., n_segments, s_coefs)
+        L = cls._longitudinal_position(1., n_segments, s_coefs)
         a_in = (
-            SingleUTube._f1(L, beta_ij) + SingleUTube._f2(L, beta_ij)
-        ) / (SingleUTube._f3(L, beta_ij) - SingleUTube._f2(L, beta_ij))
+            cls._f1(L, beta_ij) + cls._f2(L, beta_ij)
+        ) / (cls._f3(L, beta_ij) - cls._f2(L, beta_ij))
         return a_in
 
-    @staticmethod
-    @jit
-    def _outlet_fluid_temperature_a_b(beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _outlet_fluid_temperature_a_b(cls, beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
         """Borehole coefficient to evaluate the outlet fluid temperature.
 
         Parameters
@@ -400,17 +400,17 @@ class SingleUTube(_Tube):
 
         """
         n_segments = jnp.shape(s_coefs)[1]
-        L = SingleUTube._longitudinal_position(1., n_segments, s_coefs)
-        one_over_f3_minus_f2 = 1 / (SingleUTube._f3(L, beta_ij) - SingleUTube._f2(L, beta_ij))
+        L = cls._longitudinal_position(1., n_segments, s_coefs)
+        one_over_f3_minus_f2 = 1 / (cls._f3(L, beta_ij) - cls._f2(L, beta_ij))
 
         # Longitudinal positions, norms of Jacobian and basis functions
         t = vmap(
-            SingleUTube._longitudinal_position,
+            cls._longitudinal_position,
             in_axes=(None, 0, None),
             out_axes=0
         )(x, jnp.arange(n_segments), s_coefs)
         J = vmap(
-            SingleUTube._norm_of_jacobian,
+            cls._norm_of_jacobian,
             in_axes=(None, 0, None),
             out_axes=0
         )(x, jnp.arange(n_segments), J_coefs)
@@ -422,8 +422,8 @@ class SingleUTube(_Tube):
 
         # Integral of the function
         integrand = one_over_f3_minus_f2 * J * (
-            SingleUTube._f4(L - t, beta_ij)
-            + SingleUTube._f5(L - t, beta_ij)
+            cls._f4(L - t, beta_ij)
+            + cls._f5(L - t, beta_ij)
             )
         a_b = vmap(
             jnp.outer,
@@ -471,8 +471,9 @@ class SingleUTube(_Tube):
         gamma = jnp.sqrt(0.25 * (beta1 + beta2)**2 + beta12 * (beta1 + beta2))
         return gamma
 
-    @staticmethod
-    def _delta(beta_ij: Array) -> float:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _delta(cls, beta_ij: Array) -> float:
         """Coefficient ``delta`` from Hellström (1991).
 
         Parameters
@@ -488,13 +489,13 @@ class SingleUTube(_Tube):
         beta1 = beta_ij[0, 0]
         beta2 = beta_ij[1, 1]
         beta12 = beta_ij[0, 1]
-        gamma = SingleUTube._gamma(beta_ij)
+        gamma = cls._gamma(beta_ij)
         delta = 1. / gamma * (beta12 + 0.5 * (beta1 + beta2))
         return delta
 
-    @staticmethod
-    @jit
-    def _f1(s: Array | float, beta_ij: Array) -> Array | float:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _f1(cls, s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f1`` from Hellström (1991).
 
         Parameters
@@ -510,15 +511,15 @@ class SingleUTube(_Tube):
             (M,) array.
 
         """
-        beta = SingleUTube._beta(beta_ij)
-        gamma = SingleUTube._gamma(beta_ij)
-        delta = SingleUTube._delta(beta_ij)
+        beta = cls._beta(beta_ij)
+        gamma = cls._gamma(beta_ij)
+        delta = cls._delta(beta_ij)
         f1 = jnp.exp(beta * s) * (jnp.cosh(gamma * s) - delta * jnp.sinh(gamma * s))
         return f1
 
-    @staticmethod
-    @jit
-    def _f2(s: Array | float, beta_ij: Array) -> Array | float:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _f2(cls, s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f2`` from Hellström (1991).
 
         Parameters
@@ -534,15 +535,15 @@ class SingleUTube(_Tube):
             (M,) array.
 
         """
-        beta = SingleUTube._beta(beta_ij)
-        gamma = SingleUTube._gamma(beta_ij)
+        beta = cls._beta(beta_ij)
+        gamma = cls._gamma(beta_ij)
         beta12 = beta_ij[0, 1]
         f2 = jnp.exp(beta * s) * beta12 / gamma * jnp.sinh(gamma * s)
         return f2
 
-    @staticmethod
-    @jit
-    def _f3(s: Array | float, beta_ij: Array) -> Array | float:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _f3(cls, s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f3`` from Hellström (1991).
 
         Parameters
@@ -558,15 +559,15 @@ class SingleUTube(_Tube):
             (M,) array.
 
         """
-        beta = SingleUTube._beta(beta_ij)
-        gamma = SingleUTube._gamma(beta_ij)
-        delta = SingleUTube._delta(beta_ij)
+        beta = cls._beta(beta_ij)
+        gamma = cls._gamma(beta_ij)
+        delta = cls._delta(beta_ij)
         f3 = jnp.exp(beta * s) * (jnp.cosh(gamma * s) + delta * jnp.sinh(gamma * s))
         return f3
 
-    @staticmethod
-    @jit
-    def _f4(s: Array | float, beta_ij: Array) -> Array | float:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _f4(cls, s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f4`` from Hellström (1991).
 
         Parameters
@@ -585,15 +586,15 @@ class SingleUTube(_Tube):
         beta1 = beta_ij[0, 0]
         beta2 = beta_ij[1, 1]
         beta12 = beta_ij[0, 1]
-        beta = SingleUTube._beta(beta_ij)
-        gamma = SingleUTube._gamma(beta_ij)
-        delta = SingleUTube._delta(beta_ij)
+        beta = cls._beta(beta_ij)
+        gamma = cls._gamma(beta_ij)
+        delta = cls._delta(beta_ij)
         f4 = jnp.exp(beta * s) * (beta1 * jnp.cosh(gamma * s) - (delta * beta1 + beta2 * beta12 / gamma) * jnp.sinh(gamma * s))
         return f4
 
-    @staticmethod
-    @jit
-    def _f5(s: Array | float, beta_ij: Array) -> Array | float:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _f5(cls, s: Array | float, beta_ij: Array) -> Array | float:
         """Function ``f5`` from Hellström (1991).
 
         Parameters
@@ -612,8 +613,8 @@ class SingleUTube(_Tube):
         beta1 = beta_ij[0, 0]
         beta2 = beta_ij[1, 1]
         beta12 = beta_ij[0, 1]
-        beta = SingleUTube._beta(beta_ij)
-        gamma = SingleUTube._gamma(beta_ij)
-        delta = SingleUTube._delta(beta_ij)
+        beta = cls._beta(beta_ij)
+        gamma = cls._gamma(beta_ij)
+        delta = cls._delta(beta_ij)
         f5 = jnp.exp(beta * s) * (beta2 * jnp.cosh(gamma * s) + (delta * beta2 + beta1 * beta12 / gamma) * jnp.sinh(gamma * s))
         return f5

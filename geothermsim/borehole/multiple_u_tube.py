@@ -65,9 +65,9 @@ class MultipleUTube(_Tube):
 
     """
 
-    @staticmethod
-    @jit
-    def _fluid_temperature_a_in(xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array) -> Array:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _fluid_temperature_a_in(cls, xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array) -> Array:
         """Inlet coefficient to evaluate the fluid temperatures.
 
         Parameters
@@ -103,10 +103,10 @@ class MultipleUTube(_Tube):
         n_pipes_over_two = n_pipes // 2
         n_segments = jnp.shape(s_coefs)[1]
         # General solution at coordinates `xi`
-        E_0_xi = MultipleUTube._general_solution_a_0(
+        E_0_xi = cls._general_solution_a_0(
             xi_p, index, beta_ij, s_coefs)
         # General solution at the bottom-end
-        E_0 = MultipleUTube._general_solution_a_0(
+        E_0 = cls._general_solution_a_0(
             1., n_segments, beta_ij, s_coefs)
         # Coefficients for connectivity at the top of the borehole
         # T_f_d(-1) = c_in * T_f_in + c_u @ T_f_u(-1)
@@ -138,9 +138,9 @@ class MultipleUTube(_Tube):
         )
         return a_in
 
-    @staticmethod
-    @jit
-    def _fluid_temperature_a_b(xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _fluid_temperature_a_b(cls, xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
         """Borehole wall coefficient to evaluate the fluid temperatures.
 
         Parameters
@@ -183,14 +183,14 @@ class MultipleUTube(_Tube):
         n_pipes_over_two = n_pipes // 2
         n_segments = jnp.shape(s_coefs)[1]
         # General solution at coordinates `xi`
-        E_0_xi = MultipleUTube._general_solution_a_0(
+        E_0_xi = cls._general_solution_a_0(
             xi_p, index, beta_ij, s_coefs)
-        E_b_xi = MultipleUTube._general_solution_a_b(
+        E_b_xi = cls._general_solution_a_b(
             xi_p, index, beta_ij, s_coefs, J_coefs, psi_coefs, x, w)
         # General solution at the bottom-end
-        E_0 = MultipleUTube._general_solution_a_0(
+        E_0 = cls._general_solution_a_0(
             1., n_segments, beta_ij, s_coefs)
-        E_b = MultipleUTube._general_solution_a_b(
+        E_b = cls._general_solution_a_b(
             1., n_segments, beta_ij, s_coefs, J_coefs, psi_coefs, x, w)
         # Coefficients for connectivity at the top of the borehole
         # T_f_d(-1) = c_in * T_f_in + c_u @ T_f_u(-1)
@@ -221,9 +221,9 @@ class MultipleUTube(_Tube):
         )
         return a_b
 
-    @staticmethod
-    @jit
-    def _general_solution_a_0(xi_p: float, index: int, beta_ij: Array, s_coefs: Array) -> Array:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _general_solution_a_0(cls, xi_p: float, index: int, beta_ij: Array, s_coefs: Array) -> Array:
         """Top-end coefficient to evaluate the general solution.
 
         Parameters
@@ -241,14 +241,14 @@ class MultipleUTube(_Tube):
             top-end fluid temperature.
 
         """
-        s = MultipleUTube._longitudinal_position(xi_p, index, s_coefs)
-        A = MultipleUTube._ode_coefficients(beta_ij)
-        a_0 = MultipleUTube._phi(s, A)
+        s = cls._longitudinal_position(xi_p, index, s_coefs)
+        A = cls._ode_coefficients(beta_ij)
+        a_0 = cls._phi(s, A)
         return a_0
 
-    @staticmethod
-    @jit
-    def _general_solution_a_b(xi_p: float, index: int, beta_ij: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _general_solution_a_b(cls, xi_p: float, index: int, beta_ij: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
         """Borehole wall coefficient to evaluate the general solution.
 
         Parameters
@@ -272,9 +272,9 @@ class MultipleUTube(_Tube):
         n_nodes = jnp.shape(psi_coefs)[0]
         a_b = jnp.zeros((n_pipes, n_segments, n_nodes))
         # Longitudinal position corresponding to coordinate `xi_p`
-        s = MultipleUTube._longitudinal_position(xi_p, index, s_coefs)
+        s = cls._longitudinal_position(xi_p, index, s_coefs)
         # Coefficients of the ODE
-        A = MultipleUTube._ode_coefficients(beta_ij)
+        A = cls._ode_coefficients(beta_ij)
         b = -A.sum(axis=1)
 
         def _integral(_i: int, _factor: float) -> Array:
@@ -284,8 +284,8 @@ class MultipleUTube(_Tube):
             _w = _factor * w
             # Longitudinal positions, norms of Jacobian and basis functions
             # at integration points
-            _t = MultipleUTube._longitudinal_position(_x, _i, s_coefs)
-            _J = MultipleUTube._norm_of_jacobian(_x, _i, J_coefs)
+            _t = cls._longitudinal_position(_x, _i, s_coefs)
+            _J = cls._norm_of_jacobian(_x, _i, J_coefs)
             _psi = vmap(
                 Basis._f_psi,
                 in_axes=(0, None),
@@ -294,7 +294,7 @@ class MultipleUTube(_Tube):
 
             # Integral of the function
             _phi = vmap(
-                MultipleUTube._phi,
+                cls._phi,
                 in_axes=(0, None),
                 out_axes=-1
             )(s - _t, A)
@@ -357,9 +357,9 @@ class MultipleUTube(_Tube):
         ode_coefficients = ode_coefficients.at[n_pipes_over_two:, :].multiply(-1)
         return ode_coefficients
 
-    @staticmethod
-    @jit
-    def _outlet_fluid_temperature_a_in(beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array) -> float:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _outlet_fluid_temperature_a_in(cls, beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array) -> float:
         """Inlet coefficient to evaluate the outlet fluid temperature.
 
         Parameters
@@ -395,7 +395,7 @@ class MultipleUTube(_Tube):
         n_pipes_over_two = n_pipes // 2
         n_segments = jnp.shape(s_coefs)[1]
         # General solution at the bottom-end
-        E_0 = MultipleUTube._general_solution_a_0(
+        E_0 = cls._general_solution_a_0(
             1., n_segments, beta_ij, s_coefs)
         # Coefficients for connectivity at the top of the borehole
         # T_f_d(-1) = c_in * T_f_in + c_u @ T_f_u(-1)
@@ -423,9 +423,9 @@ class MultipleUTube(_Tube):
         a_in = m_u @ jnp.linalg.solve(delta_E_0_u, delta_E_0_in)
         return a_in
 
-    @staticmethod
-    @jit
-    def _outlet_fluid_temperature_a_b(beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _outlet_fluid_temperature_a_b(cls, beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
         """Borehole coefficient to evaluate the outlet fluid temperature.
 
         Parameters
@@ -475,9 +475,9 @@ class MultipleUTube(_Tube):
         n_pipes_over_two = n_pipes // 2
         n_segments = jnp.shape(s_coefs)[1]
         # General solution at the bottom-end
-        E_0 = MultipleUTube._general_solution_a_0(
+        E_0 = cls._general_solution_a_0(
             1., n_segments, beta_ij, s_coefs)
-        E_b = MultipleUTube._general_solution_a_b(
+        E_b = cls._general_solution_a_b(
             1., n_segments, beta_ij, s_coefs, J_coefs, psi_coefs, x, w)
         # Coefficients for connectivity at the top of the borehole
         # T_f_d(-1) = c_in * T_f_in + c_u @ T_f_u(-1)

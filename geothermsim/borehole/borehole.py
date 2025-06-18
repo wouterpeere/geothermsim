@@ -637,9 +637,9 @@ class Borehole:
         """
         return jnp.polyval(J_coefs[:, index], xi_p)
 
-    @staticmethod
-    @jit
-    def _point_heat_source(xi_p: float, index: int, p: Array, time: float, alpha: float, r_min: float, p_coefs: Array) -> Array:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _point_heat_source(cls, xi_p: float, index: int, p: Array, time: float, alpha: float, r_min: float, p_coefs: Array) -> Array:
         """Point heat source solution.
 
         Parameters
@@ -665,7 +665,7 @@ class Borehole:
         array
             (N,) array of the point heat source solution.
         """
-        p_source = Borehole._position(xi_p, index, p_coefs)
+        p_source = cls._position(xi_p, index, p_coefs)
         p_mirror = p * jnp.array([1, 1, -1], dtype=int)
         # Point heat source solutions
         h = (
@@ -738,9 +738,9 @@ class Borehole:
         else:
             return xi_p
 
-    @staticmethod
-    @jit
-    def _thermal_response_factor(index: int, p: Array, time: float, alpha: float, r_min: float, p_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _thermal_response_factor(cls, index: int, p: Array, time: float, alpha: float, r_min: float, p_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
         """Point heat source solution.
 
         Parameters
@@ -780,7 +780,7 @@ class Borehole:
             (`n_nodes`,) array of the point heat source solution.
         """
         xi_p = x
-        J = Borehole._norm_of_jacobian(xi_p, index, J_coefs)
+        J = cls._norm_of_jacobian(xi_p, index, J_coefs)
         psi = vmap(
                 Basis._f_psi,
                 in_axes=(0, None),
@@ -788,7 +788,7 @@ class Borehole:
             )(xi_p, psi_coefs)
         # Point heat source solutions
         h = psi * J * vmap(
-            Borehole._point_heat_source,
+            cls._point_heat_source,
             in_axes=(0, None, None, None, None, None, None),
             out_axes=0
             )(
