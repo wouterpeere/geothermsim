@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
+from functools import partial
 from typing import Tuple
 
 from jax import numpy as jnp
 from jax import Array, jit, vmap
-from jax.lax import fori_loop
+from jax.lax import fori_loop, switch
 
 from ._tube import _Tube
 from ..basis import Basis
@@ -269,54 +270,47 @@ class SingleUTube(_Tube):
         # Longitudinal position corresponding to coordinate `xi_p`
         s = SingleUTube._longitudinal_position(xi_p, index, s_coefs)
 
-        # Evaluation of the integral along segments above the segment `index`
-        def integral_segment_above_point(i, a_b):
+        def _integral(_i: int, _factor: float) -> Array:
+            """Integrals over a portion of a segment."""
+            # Rescale integration points and weights
+            _x = _factor * (x + 1) - 1
+            _w = _factor * w
             # Longitudinal positions, norms of Jacobian and basis functions
             # at integration points
-            t = SingleUTube._longitudinal_position(x, i, s_coefs)
-            J = SingleUTube._norm_of_jacobian(x, i, J_coefs)
-            psi = vmap(
+            _t = SingleUTube._longitudinal_position(_x, _i, s_coefs)
+            _J = SingleUTube._norm_of_jacobian(_x, _i, J_coefs)
+            _psi = vmap(
                 Basis._f_psi,
                 in_axes=(0, None),
                 out_axes=-1
-            )(x, psi_coefs)
+            )(_x, psi_coefs)
 
             # Integral of the function f4
-            integrand_f4 = J * SingleUTube._f4(s - t, beta_ij)
-            a_b = a_b.at[0, i, :].set(
-                (integrand_f4 * psi) @ w)
+            _integrand_f4 = _J * SingleUTube._f4(s - _t, beta_ij)
             # Integral of the function f5
-            integrand_f5 = -J * SingleUTube._f5(s - t, beta_ij)
-            a_b = a_b.at[1, i, :].set(
-                (integrand_f5 * psi) @ w)
-            return a_b
-        a_b = fori_loop(0, index, integral_segment_above_point, a_b)
+            _integrand_f5 = -_J * SingleUTube._f5(s - _t, beta_ij)
+            _a_b = jnp.stack([(_integrand_f4 * _psi) @ _w, (_integrand_f5 * _psi) @ _w])
+            return _a_b
 
-        # Evaluation of the integral along segment `index`
+        def _zeros(_i: int) -> Array:
+            """Array of zeros for segments below `index`."""
+            return jnp.zeros((n_pipes, n_nodes))
+
         # Ratio of the segment from top to the evaluation point
         factor = 0.5 * (xi_p + 1)
-        # Rescale integration points and weights
-        x = factor * (x + 1) - 1
-        w = factor * w
-        # Longitudinal positions, norms of Jacobian and basis functions
-        # at integration points
-        t = SingleUTube._longitudinal_position(x, index, s_coefs)
-        J = SingleUTube._norm_of_jacobian(x, index, J_coefs)
-        psi = vmap(
-            Basis._f_psi,
-            in_axes=(0, None),
-            out_axes=-1
-        )(x, psi_coefs)
+        branches = [
+            partial(_integral, _factor=1.),
+            partial(_integral, _factor=factor),
+            _zeros
+        ]
 
-        # Integral of the function f4
-        integrand_f4 = J * SingleUTube._f4(s - t, beta_ij)
-        a_b = a_b.at[0, index, :].set(
-                (integrand_f4 * psi) @ w)
-        # Integral of the function f5
-        integrand_f5 = -J * SingleUTube._f5(s - t, beta_ij)
-        a_b = a_b.at[1, index, :].set(
-                (integrand_f5 * psi) @ w)
-        return a_b.reshape(2, -1)
+        # Evaluation of the integral along all segments
+        def _evaluate_integrals(_i, _a_b):
+            _a_b = _a_b.at[:, _i, :].set(switch(_i - index + 1, branches, _i))
+            return _a_b
+        a_b = fori_loop(0, n_segments, _evaluate_integrals, a_b)
+
+        return a_b.reshape(n_pipes, -1)
 
     @staticmethod
     @jit
