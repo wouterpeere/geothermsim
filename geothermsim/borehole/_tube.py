@@ -800,7 +800,6 @@ class _Tube(Borehole, ABC):
             temperature.
 
         """
-        # xi_p, index = self._segment_coordinate(xi, self.xi_edges)
         a_b = jnp.zeros((jnp.shape(s_coefs)[1], jnp.shape(psi_coefs)[0]))
         b_b = cls._fluid_temperature_a_b(
             xi_p,

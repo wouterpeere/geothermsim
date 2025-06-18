@@ -39,6 +39,9 @@ class Path:
     p : array_like or None, default: None
         Positions (``x``, ``y``, ``z``) of the nodes along the
         trajectory of the borehole.
+    deg : int or None, default: None
+        Polynomial degree of the path. This is used as a default to
+        approximate the trajectory in borehole models.
 
     Attributes
     ----------
@@ -49,7 +52,7 @@ class Path:
 
     """
 
-    def __init__(self, f_p: Callable[[float | Array], Array], f_dp_dxi: Callable[[float | Array], Array], f_J: Callable[[float | Array], float | Array], f_s: Callable[[float | Array], float | Array], xi: ArrayLike | None = None, p: ArrayLike | None = None):
+    def __init__(self, f_p: Callable[[float | Array], Array], f_dp_dxi: Callable[[float | Array], Array], f_J: Callable[[float | Array], float | Array], f_s: Callable[[float | Array], float | Array], xi: ArrayLike | None = None, p: ArrayLike | None = None, deg: int | None = None):
         # Runtime type validation
         if not isinstance(xi, ArrayLike) and xi is not None:
             raise TypeError(f"Expected arraylike input; got {xi}")
@@ -62,6 +65,7 @@ class Path:
         # --- Class atributes ---
         self.xi = xi
         self.p = p
+        self.deg = deg
 
         # --- Path functions ---
         # Position (p)
@@ -82,7 +86,6 @@ class Path:
             self.n_nodes = None
         # Length of the path
         self.L = self.f_s(1.)
-        
 
     def f_p(self, xi: float | Array) -> Array:
         """Position along the path.
@@ -218,7 +221,7 @@ class Path:
         def f_s(_xi: float | Array) -> float | Array:
             """Longitudinal position along the path."""
             return 0.5 * (1 + _xi) * L
-        return cls(f_p, f_dp_dxi, f_J, f_s, xi=xi, p=p)
+        return cls(f_p, f_dp_dxi, f_J, f_s, xi=xi, p=p, deg=1)
 
     @classmethod
     def Polynomial(cls, xi: ArrayLike, p: ArrayLike, deg: int = None, s_method: str = 'monotonic', s_order: int = 21, s_num: int = 21) -> Self:
@@ -271,6 +274,7 @@ class Path:
         # Position along the path
         if deg is None:
             p_coefs = jnp.polyfit(xi, p, len(xi)-1)
+            deg = len(xi)-1
         else:
             p_w = jnp.ones_like(xi)
             p_w.at[0].set(1e4)
@@ -313,7 +317,7 @@ class Path:
         )
         s = jnp.cumulative_sum(ds, include_initial=True)
         f_s = Interpolator1D(s_xi, s, method=s_method, extrap=True)
-        return cls(f_p, f_dp_dxi, f_J, f_s, xi=xi, p=p)
+        return cls(f_p, f_dp_dxi, f_J, f_s, xi=xi, p=p, deg=deg)
 
     @classmethod
     def Spline(cls, xi: ArrayLike, p: ArrayLike, method: str = 'cubic2', s_method: str = 'monotonic', s_order: int = 21, s_num: int = 21) -> Self:
@@ -376,4 +380,4 @@ class Path:
         )
         s = jnp.cumulative_sum(ds, include_initial=True)
         f_s = Interpolator1D(s_xi, s, method=s_method, extrap=True)
-        return cls(f_p, f_dp_dxi, f_J, f_s, xi=xi, p=p)
+        return cls(f_p, f_dp_dxi, f_J, f_s, xi=xi, p=p, deg=None)
