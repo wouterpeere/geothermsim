@@ -32,8 +32,8 @@ class CoaxialHeatExchanger(_GroundHeatExchanger):
         Ground thermal conductivity (in W/m-K).
     k_b : float
         Grout thermal conductivity (in W/m-K).
-    k_p : float
-        Pipe thermal conductivity (in W/m-K).
+    k_p : array_like
+        Thermal conductivity of the pipes (in W/m-K).
     mu_f : float
         Fluid dynamic viscosity (in kg/m-s).
     rho_f : float
@@ -60,17 +60,20 @@ class CoaxialHeatExchanger(_GroundHeatExchanger):
 
     """
 
-    def __init__(self, p: ArrayLike, r_p_in: ArrayLike, r_p_out: ArrayLike, r_b: float, k_s: float, k_b: float, k_p: float, mu_f: float, rho_f: float, k_f: float, cp_f: float, epsilon: float, parallel: bool = True, J: int = 3):
+    def __init__(self, p: ArrayLike, r_p_in: ArrayLike, r_p_out: ArrayLike, r_b: float, k_s: float, k_b: float, k_p: ArrayLike, mu_f: float, rho_f: float, k_f: float, cp_f: float, epsilon: float, parallel: bool = True, J: int = 3):
         # Runtime type validation
         if not isinstance(r_p_in, ArrayLike):
             raise TypeError(f"Expected arraylike input; got {r_p_in}")
         if not isinstance(r_p_out, ArrayLike):
             raise TypeError(f"Expected arraylike input; got {r_p_out}")
+        if not isinstance(k_p, ArrayLike):
+            raise TypeError(f"Expected arraylike input; got {k_p}")
         if not isinstance(p, ArrayLike):
             raise TypeError(f"Expected arraylike input; got {p}")
         # Convert input to jax.Array
         r_p_in = jnp.asarray(r_p_in)
         r_p_out = jnp.asarray(r_p_out)
+        k_p = jnp.broadcast_to(k_p, 2 * p.shape[0])
         p = jnp.atleast_2d(p)
 
         # --- Class atributes ---
@@ -116,12 +119,12 @@ class CoaxialHeatExchanger(_GroundHeatExchanger):
         # Conduction thermal resistance through pipe walls
         self.R_p_inner = vmap(
             conduction_thermal_resistance_circular_pipe,
-            in_axes=(0, 0, None),
+            in_axes=(0, 0, 0),
             out_axes=0
         )(self._r_p_in_inner, self._r_p_out_inner, self.k_p)
         self.R_p_outer = vmap(
             conduction_thermal_resistance_circular_pipe,
-            in_axes=(0, 0, None),
+            in_axes=(0, 0, 0),
             out_axes=0
         )(self._r_p_in_outer, self._r_p_out_outer, self.k_p)
 
