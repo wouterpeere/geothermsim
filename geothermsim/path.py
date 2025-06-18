@@ -130,7 +130,7 @@ class Path:
         Returns
         -------
         float or array
-            Norm of the Jacobian or (N, 3,) array of the norms of the
+            Norm of the Jacobian or (N,) array of the norms of the
             Jacobian along the trajectory.
         """
         return self._f_J(xi)

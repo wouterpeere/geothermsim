@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from functools import partial
-from typing import Self
+from typing import Self, Tuple
 
 from jax import numpy as jnp
 from jax import Array, jit, vmap
@@ -82,37 +82,16 @@ class Borehole:
         # Borehole length
         self.L = jnp.diff(path.f_s(jnp.array([-1., 1.])))[0]
 
-        # --- Changes of coordinates ---
-        a, b = xi_edges[:-1], xi_edges[1:]
-        # Segments --> Borehole
-        f_xi_sb = lambda _eta: 0.5 * (b + a) + 0.5 * _eta * (b - a)
-        self.f_xi_sb = jit(
-            lambda _eta: vmap(f_xi_sb, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_xi_sb(_eta)
-        )
-        # Borehole --> Segments
-        f_xi_bs = lambda _eta: (2 * _eta - (b + a)) / (b - a)
-        self.f_xi_bs = jit(
-            lambda _eta: vmap(f_xi_bs, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_xi_bs(_eta)
-        )
-
-        # --- Basis functions ---
-        # Weights at interfaces between segments
-        w_interfaces = jnp.concatenate([jnp.array([1.]), jnp.full(n_segments - 1, 0.5), jnp.array([1.])])
-        f_w_interfaces = lambda _eta: jnp.heaviside(b - _eta, w_interfaces[1:]) * jnp.heaviside(_eta - a, w_interfaces[:-1])
-        f_psi = lambda _eta: vmap(
-            lambda _eta_p, _in_segment: basis.f_psi(_eta_p) * _in_segment,
-            in_axes=(0, 0)
-        )(f_xi_bs(_eta), f_w_interfaces(_eta)).flatten()
-        self.f_psi = jit(
-            lambda _eta: vmap(f_psi, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_psi(_eta)
-        )
-        self.f = jit(
-            lambda _eta, f_nodes: self.f_psi(_eta) @ f_nodes
-        )
+        # --- Path functions ---
+        self._initialize_path_coefficients(basis.n_nodes - 1)
 
         # --- Nodal values of path and basis functions ---
         # Borehole coordinates (xi)
-        xi = self.f_xi_sb(basis.xi).T.flatten()
+        xi = vmap(
+            self.f_xi_sb,
+            in_axes=(None, 0),
+            out_axes=0
+        )(basis.xi, jnp.arange(self.n_segments)).flatten()
         self.xi = xi
         # Positions (p)
         self.p = path.f_p(xi)
@@ -124,6 +103,120 @@ class Borehole:
         self.s = path.f_s(xi)
         # Integration weights
         self.w = (jnp.tile(basis.w, (n_segments, 1)).T * segment_ratios).T.flatten() * self.J
+
+    def f(self, xi: float | Array, f_nodes: Array) -> float | Array:
+        """Value at coordinate from values at nodes.
+
+        Parameters
+        ----------
+        xi : float or array
+            Borehole coordinate or (M,) array of borehole coordinates.
+        f_nodes : array
+            (`n_nodes`,) array of values at borehole nodes.
+
+        Returns
+        -------
+        float or array
+            Value or (M,) array of values at requested coordinates
+            evaluated using polynomial basis functions.
+
+        """
+        if len(jnp.shape(xi)) > 0:
+            return vmap(self.f, in_axes=(0, None), out_axes=0)(xi, f_nodes)
+        xi_p, index = self.f_xi_bs(xi)
+        f_nodes_segment = f_nodes.reshape(self.n_segments, -1)[index]
+        return self.basis.f(xi_p, f_nodes_segment)
+
+    def f_J(self, xi: float | Array) -> float | Array:
+        """Norm of the Jacobian.
+
+        Parameters
+        ----------
+        xi : float or array
+            Coordinate or (M,) array of coordinates along the borehole.
+
+        Returns
+        -------
+        float
+            Norm of the Jacobian or (M,) array of norms of the Jacobian
+            (in meters).
+
+        """
+        if len(jnp.shape(xi)) > 0:
+            xi_p, index = vmap(
+                self.f_J,
+                in_axes=0,
+                out_axes=0
+            )(xi)
+        xi_p, index = self.f_xi_bs(xi)
+        return self._norm_of_jacobian(xi_p, index, self._J_coefs)
+
+    def f_s(self, xi: float | Array) -> float | Array:
+        """Longitudinal position.
+
+        Parameters
+        ----------
+        xi : float or array
+            Coordinate or (M,) array of coordinates along the borehole.
+
+        Returns
+        -------
+        float
+            Longitudinal position or (M,) array of longitudinal
+            positions along the borehole (in meters).
+
+        """
+        if len(jnp.shape(xi)) > 0:
+            xi_p, index = vmap(
+                self.f_s,
+                in_axes=0,
+                out_axes=0
+            )(xi)
+        xi_p, index = self.f_xi_bs(xi)
+        return self._longitudinal_position(xi_p, index, self._s_coefs)
+
+    def f_xi_bs(self, xi: float | Array) -> Tuple[float | Array, int]:
+        """Segment coordinate from borehole coordinate.
+
+        Parameters
+        ----------
+        xi : float or array
+            Coordinate or (M,) array of coordinates along the borehole.
+
+        Returns
+        -------
+        xi_p : float or array
+            Coordinate or (M,) array of coordinates along the borehole
+            segments.
+        index : int or array
+            Index or (M,) array of indices of the borehole segments.
+
+        """
+        if len(jnp.shape(xi)) > 0:
+            xi_p, index = vmap(
+                self.f_xi_bs,
+                in_axes=0,
+                out_axes=0
+            )(xi)
+        return self._segment_coordinate(xi, self.xi_edges)
+
+    def f_xi_sb(self, xi_p: float, index: int) -> float:
+        """Borehole coordinate from segment coordinate.
+
+        Parameters
+        ----------
+        xi_p : float
+            Coordinate along the borehole segment.
+        index : int
+            Index of the borehole segment.
+
+        Returns
+        -------
+        xi : float
+            Coordinate along the borehole.
+
+        """
+        return self._borehole_coordinate(xi_p, self.xi_edges, index)
 
     def h_to_borehole(self, borehole: Self, time: ArrayLike, alpha: float) -> Array:
         """Thermal response factors to nodes of another borehole.
@@ -316,6 +409,39 @@ class Borehole:
         ).flatten()
         return h_to_node
 
+    def _initialize_path_coefficients(self, deg: int):
+        """Initialize path coefficients.
+
+        Parameters
+        ----------
+        deg : int
+            Polynomial degree to approximate the path along each
+            segment. The longitudinal position ``s`` will be approximated
+            using degree ``2 * deg + 2`` polynomials.
+
+        """
+        xi_p = jnp.linspace(-1, 1, num=2*deg+2)
+        xi = vmap(
+            self.f_xi_sb, 
+            in_axes=(None, 0),
+            out_axes=1
+        )(xi_p, jnp.arange(self.n_segments))
+        s = vmap(
+            self.path.f_s,
+            in_axes=1,
+            out_axes=1
+        )(xi)
+        self._s_coefs = vmap(
+            jnp.polyfit,
+            in_axes=(None, 1, None),
+            out_axes=1
+        )(xi_p, s, 2*deg+1)
+        self._J_coefs = vmap(
+            jnp.polyder,
+            in_axes=1,
+            out_axes=1
+        )(self._s_coefs)
+
     def _segment_point_heat_source(self, xi_p: float, p: Array, time: float, alpha: float, r_min: float = 0.) -> Array:
         """Point heat source solution along all segments of the borehole.
 
@@ -339,7 +465,7 @@ class Borehole:
             (N,) array of the point heat source solution.
         """
         # Coordinates (xi) of all sources at local segment coordinates (xi')
-        xi = self.f_xi_sb(xi_p)
+        xi = vmap(self.f_xi_sb, in_axes=(None, 0), out_axes=0)(xi_p, jnp.arange(self.n_segments))
         p_source = self.path.f_p(xi)
         p_mirror = p * jnp.array([1, 1, -1], dtype=int)
         J = self.path.f_J(xi)
@@ -355,6 +481,111 @@ class Borehole:
             )(p_source, p_mirror, time, alpha, r_min)
         )
         return h * self.segment_ratios * J
+
+    @staticmethod
+    @jit
+    def _borehole_coordinate(xi_p: float, xi_edges: Array, index: int) -> float:
+        """Borehole coordinate from segment coordinate.
+
+        Parameters
+        ----------
+        xi_p : float
+            Coordinate along the borehole segment.
+        index : int
+            Index of the borehole segment.
+
+        Returns
+        -------
+        xi : float
+            Coordinate along the borehole.
+
+        """
+        a, b = xi_edges[index], xi_edges[index + 1]
+        xi = 0.5 * (b + a) + 0.5 * xi_p * (b - a)
+        return xi
+
+    @staticmethod
+    @jit
+    def _longitudinal_position(xi_p: float, index: int, s_coefs: Array) -> float:
+        """Longitudinal position.
+
+        Parameters
+        ----------
+        xi_p : float
+            Coordinate along the borehole segment.
+        index : int
+            Index of the borehole segment.
+        s_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the longitudinal position (in meters) along
+            the borehole segments as a function of `xi_p`.
+
+        Returns
+        -------
+        float
+            Longitudinal position along the borehole (in meters).
+
+        """
+        return jnp.polyval(s_coefs[:, index], xi_p)
+
+    @staticmethod
+    @jit
+    def _norm_of_jacobian(xi_p: float, index: int, J_coefs: Array) -> float:
+        """Norm of the Jacobian.
+
+        Parameters
+        ----------
+        xi_p : float
+            Coordinate along the borehole segment.
+        index : int
+            Index of the borehole segment.
+        J_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the norm of the jacobian (in meters) along
+            the borehole segments as a function of `xi_p`.
+
+        Returns
+        -------
+        float
+            Norm of the Jacobian (in meters).
+
+        """
+        return jnp.polyval(J_coefs[:, index], xi_p)
+
+    @staticmethod
+    @partial(jit, static_argnames=['index_out'])
+    def _segment_coordinate(xi: float, xi_edges: Array, index_out: bool = True) -> Tuple[float, int] | float:
+        """Segment coordinate from borehole coordinate.
+
+        Parameters
+        ----------
+        xi : float
+            Coordinate along the borehole.
+        xi_edges : array
+            (`n_segments` + 1,) array of coordinates of the edges of
+            the segments.
+        index_out : bool, default: True
+            Set to True to return the index of the borehole segment.
+
+        Returns
+        -------
+        xi_p : float
+            Coordinate along the borehole segment.
+        index : int, optional
+            Index of the borehole segment. Returned only if `index_out`
+            is True.
+
+        """
+        index = jnp.maximum(
+            jnp.searchsorted(xi_edges, xi),
+            1
+        ).astype(int) - 1
+        a, b = xi_edges[index], xi_edges[index + 1]
+        xi_p = (2 * xi - (b + a)) / (b - a)
+        if index_out:
+            return xi_p, index
+        else:
+            return xi_p
 
     @classmethod
     def from_dimensions(cls, L: float, D: float, r_b: float, x: float, y: float, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None) -> Self:

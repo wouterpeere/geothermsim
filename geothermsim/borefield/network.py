@@ -52,7 +52,6 @@ class Network(Borefield):
     def __init__(self, boreholes: List[SingleUTube]):
         super().__init__(boreholes)
 
-    @partial(jit, static_argnames=['self'])
     def effective_borefield_thermal_resistance(self, m_flow: float | Array, cp_f: float) -> float:
         """Effective borefield thermal resistance.
 
@@ -80,7 +79,6 @@ class Network(Borefield):
         R_field = -0.5 * self.L.sum() * (1. + a) / b
         return R_field
 
-    @partial(jit, static_argnames=['self'])
     def g(self, xi: Array | float, m_flow: float | Array, cp_f: float) -> Array:
         """Coefficients to evaluate the heat extraction rate.
 
@@ -113,7 +111,6 @@ class Network(Borefield):
         a_b = jnp.stack(a_b, axis=0)
         return a_in, a_b
 
-    @partial(jit, static_argnames=['self'])
     def g_to_self(self, m_flow: float | Array, cp_f: float) -> Array:
         """Coefficients to evaluate the heat extraction rate at nodes.
 
@@ -144,7 +141,6 @@ class Network(Borefield):
         a_b = jnp.stack(a_b, axis=0)
         return a_in, a_b
 
-    @partial(jit, static_argnames=['self'])
     def fluid_temperature(self, xi: Array | float, T_f_in: float, T_b: Array, m_flow: float | Array, cp_f: float) -> Array:
         """Fluid temperatures.
 
@@ -180,7 +176,6 @@ class Network(Borefield):
         )
         return T_f
 
-    @partial(jit, static_argnames=['self'])
     def heat_extraction_rate(self, xi: Array | float, T_f_in: float, T_b: Array, m_flow: float | Array, cp_f: float) -> Array:
         """Heat extraction rate.
 
@@ -216,7 +211,6 @@ class Network(Borefield):
         )
         return q
 
-    @partial(jit, static_argnames=['self'])
     def heat_extraction_rate_to_self(self, T_f_in: float, T_b: Array, m_flow: float | Array, cp_f: float) -> Array:
         """Heat extraction rate at nodes.
 
@@ -258,7 +252,6 @@ class Network(Borefield):
             )
         return m_flow
 
-    @partial(jit, static_argnames=['self'])
     def outlet_fluid_temperature(self, T_f_in: float, T_b: Array, m_flow: float | Array, cp_f: float) -> Array:
         """Outlet fluid temperatures.
 

@@ -96,13 +96,13 @@ class _Tube(Borehole, ABC):
             self._m_flow_factor = 1 / self._n_pipes_over_two
             # Coefficients for connectivity at the top of the borehole
             # T_f_d(-1) = c_in * T_f_in + c_u @ T_f_u(-1)
-            self._top_connectivity_in = jnp.ones(self._n_pipes_over_two)
-            self._top_connectivity_u = jnp.zeros(
+            _top_connectivity_in = jnp.ones(self._n_pipes_over_two)
+            _top_connectivity_u = jnp.zeros(
                 (self._n_pipes_over_two, self._n_pipes_over_two)
             )
             # Coefficient for mixing of the fluid at the outlet
             # T_f_out = m_u @ T_f_u(-1)
-            self._mixing_u = jnp.full(
+            self._mixing = jnp.full(
                 self._n_pipes_over_two,
                 self._m_flow_factor
             )
@@ -111,22 +111,22 @@ class _Tube(Borehole, ABC):
             self._m_flow_factor = 1
             # Coefficients for connectivity at the top of the borehole
             # T_f_d(-1) = c_in * T_f_in + c_u @ T_f_u(-1)
-            self._top_connectivity_in = jnp.concatenate([
+            _top_connectivity_in = jnp.concatenate([
                 jnp.ones(1),
                 jnp.zeros(self._n_pipes_over_two - 1),
             ])
-            self._top_connectivity_u = jnp.eye(
+            _top_connectivity_u = jnp.eye(
                 self._n_pipes_over_two,
                 k=-1
             )
             # Coefficient for mixing of the fluid at the outlet
             # T_f_out = m_u @ T_f_u(-1)
-            self._mixing_u = jnp.concatenate([
+            self._mixing = jnp.concatenate([
                 jnp.zeros(self._n_pipes_over_two - 1),
                 jnp.ones(1),
             ])
+        self._top_connectivity = (_top_connectivity_in, _top_connectivity_u)
 
-    @partial(jit, static_argnames=['self'])
     def effective_borehole_thermal_resistance(self, m_flow: float, cp_f: float) -> float:
         """Effective borehole thermal resistance.
 
@@ -143,18 +143,34 @@ class _Tube(Borehole, ABC):
             Effective borehole thermal resistance (in m-K/W).
 
         """
+        m_flow_pipe = self.m_flow_pipe(m_flow)
         beta_ij = self._beta_ij(m_flow, cp_f)
-        a = self._outlet_fluid_temperature_a_in(beta_ij)
+        a = self._outlet_fluid_temperature_a_in(
+            beta_ij,
+            self._top_connectivity,
+            self._mixing,
+            self._s_coefs)
         b = vmap(
-            self._heat_extraction_rate_a_in,
-            in_axes=(0, None, None, None),
+            vmap(
+                self._heat_extraction_rate_a_in,
+                in_axes=(0, None, None, None, None, None, None),
+                out_axes=0
+                ),
+            in_axes=(None, 0, None, None, None, None, None),
             out_axes=0
-        )(self.xi, m_flow, cp_f, beta_ij) @ self.w
+            )(
+            self.basis.xi,
+            jnp.arange(self.n_segments),
+            m_flow_pipe,
+            cp_f,
+            beta_ij,
+            self._top_connectivity,
+            self._s_coefs
+        ).flatten() @ self.w
         # Effective borehole thermal resistance
         R_b = -0.5 * self.L * (1. + a) / b
         return R_b
 
-    @partial(jit, static_argnames=['self'])
     def g(self, xi: Array | float, m_flow: float, cp_f: float) -> Tuple[Array | float, Array]:
         """Coefficients to evaluate the heat extraction rate.
 
@@ -179,7 +195,6 @@ class _Tube(Borehole, ABC):
         a_in, a_b = self._heat_extraction_rate(xi, m_flow, cp_f)
         return a_in, a_b
 
-    @partial(jit, static_argnames=['self'])
     def g_to_self(self, m_flow: float, cp_f: float) -> Tuple[Array, Array]:
         """Coefficients to evaluate the heat extraction rate at nodes.
 
@@ -200,10 +215,9 @@ class _Tube(Borehole, ABC):
             wall temperature.
 
         """
-        a_in, a_b = self._heat_extraction_rate(self.xi, m_flow, cp_f)
+        a_in, a_b = self._heat_extraction_rate_to_self(m_flow, cp_f)
         return a_in, a_b
 
-    @partial(jit, static_argnames=['self'])
     def fluid_temperature(self, xi: Array | float, T_f_in: float, T_b: Array, m_flow: float, cp_f: float) -> Array:
         """Fluid temperatures.
 
@@ -232,7 +246,6 @@ class _Tube(Borehole, ABC):
         T_f = a_in * T_f_in + a_b @ T_b
         return T_f
 
-    @partial(jit, static_argnames=['self'])
     def heat_extraction_rate(self, xi: Array | float, T_f_in: float, T_b: Array, m_flow: float, cp_f: float) -> Array | float:
         """Heat extraction rate.
 
@@ -261,7 +274,6 @@ class _Tube(Borehole, ABC):
         q = a_in * T_f_in + a_b @ T_b
         return q
 
-    @partial(jit, static_argnames=['self'])
     def heat_extraction_rate_to_self(self, T_f_in: float, T_b: Array, m_flow: float, cp_f: float) -> Array:
         """Heat extraction rate at nodes.
 
@@ -284,9 +296,26 @@ class _Tube(Borehole, ABC):
             is a ``float``, then ``M=0``.
 
         """
-        return self.heat_extraction_rate(self.xi, T_f_in, T_b, m_flow, cp_f)
+        a_in, a_b = self._heat_extraction_rate_to_self(m_flow, cp_f)
+        q = a_in * T_f_in + a_b @ T_b
+        return q
 
-    @partial(jit, static_argnames=['self'])
+    def m_flow_pipe(self, m_flow: float) -> Array:
+        """Fluid mass flow rate per pipe.
+
+        Parameters
+        ----------
+        m_flow : float
+            Fluid mass flow rate into the borehole (in kg/s).
+
+        Returns
+        -------
+        float
+            Fluid mass flow rate in each pipes (in kg/s).
+
+        """
+        return self._m_flow_factor * m_flow
+
     def outlet_fluid_temperature(self, T_f_in: float, T_b: Array, m_flow: float, cp_f: float) -> float:
         """Outlet fluid temperature.
 
@@ -312,6 +341,26 @@ class _Tube(Borehole, ABC):
         T_f_out = a_in * T_f_in + a_b @ T_b
         return T_f_out
 
+    def _beta_ij(self, m_flow: float, cp_f: float) -> Array:
+        """Thermal conductance coefficients.
+
+        Parameters
+        ----------
+        m_flow : float
+            Fluid mass flow rate (in kg/s).
+        cp_f : float
+            Fluid specific isobaric heat capacity (in J/kg-K).
+
+        Returns
+        -------
+        array
+            (`n_pipes`, `n_pipes`,) array of thermal conductance
+            coefficients.
+
+        """
+        R_d = self.thermal_resistances(m_flow)
+        return 1. / (self.m_flow_pipe(m_flow) * cp_f * R_d)
+
     def _fluid_temperature(self, xi: Array | float, m_flow: float, cp_f: float) -> Tuple[Array, Array]:
         """Coefficients to evaluate the fluid temperatures.
 
@@ -336,62 +385,51 @@ class _Tube(Borehole, ABC):
         """
         beta_ij = self._beta_ij(m_flow, cp_f)
         if len(jnp.shape(xi)) > 0:
+            xi_p, index = vmap(
+                self._segment_coordinate,
+                in_axes=(0, None),
+                out_axes=0
+            )(xi, self.xi_edges)
             a_in = vmap(
                 self._fluid_temperature_a_in,
-                in_axes=(0, None),
+                in_axes=(0, 0, None, None, None),
                 out_axes=0
-            )(xi, beta_ij)
+            )(xi_p, index, beta_ij, self._top_connectivity, self._s_coefs)
             a_b = vmap(
                 self._fluid_temperature_a_b,
-                in_axes=(0, None),
+                in_axes=(0, 0, None, None, None, None, None, None, None),
                 out_axes=0
-            )(xi, beta_ij)
+            )(
+                xi_p,
+                index,
+                beta_ij,
+                self._top_connectivity,
+                self._s_coefs,
+                self._J_coefs,
+                self.basis._psi_coefs,
+                self.basis._x_gl,
+                self.basis._w_gl
+            )
         else:
-            a_in = self._fluid_temperature_a_in(xi, beta_ij)
-            a_b = self._fluid_temperature_a_b(xi, beta_ij)
+            xi_p, index = self._segment_coordinate(xi, self.xi_edges)
+            a_in = self._fluid_temperature_a_in(
+                xi_p,
+                index,
+                beta_ij,
+                self._top_connectivity,
+                self._s_coefs)
+            a_b = self._fluid_temperature_a_b(
+                xi_p,
+                index,
+                beta_ij,
+                self._top_connectivity,
+                self._s_coefs,
+                self._J_coefs,
+                self.basis._psi_coefs,
+                self.basis._x_gl,
+                self.basis._w_gl
+            )
         return a_in, a_b
-
-    @abstractmethod
-    def _fluid_temperature_a_in(self, xi: float, beta_ij: Array) -> Array:
-        """Inlet coefficient to evaluate the fluid temperatures.
-
-        Parameters
-        ----------
-        xi : float
-            Coordinate along the borehole.
-        beta_ij: array
-            (`n_pipes`, `n_pipes`,) array of thermal conductance
-            coefficients.
-
-        Returns
-        -------
-        array
-            (`n_pipes`,) array of coefficients for the inlet fluid
-            temperature.
-
-        """
-        ...
-
-    @abstractmethod
-    def _fluid_temperature_a_b(self, xi: float, beta_ij: Array) -> Array:
-        """Borehole wall coefficient to evaluate the fluid temperatures.
-
-        Parameters
-        ----------
-        xi : float
-            Coordinate along the borehole.
-        beta_ij: array
-            (`n_pipes`, `n_pipes`,) array of thermal conductance
-            coefficients.
-
-        Returns
-        -------
-        array
-            (`n_pipes`, `n_nodes`,) array of coefficients for the borehole wall
-            temperature.
-
-        """
-        ...
 
     def _heat_extraction_rate(self, xi: Array | float, m_flow: float, cp_f: float) -> Tuple[Array | float, Array]:
         """Coefficients to evaluate the heat extraction rate.
@@ -414,81 +452,130 @@ class _Tube(Borehole, ABC):
             temperature.
 
         """
+        m_flow_pipe = self.m_flow_pipe(m_flow)
         beta_ij = self._beta_ij(m_flow, cp_f)
         if len(jnp.shape(xi)) > 0:
+            xi_p, index = vmap(
+                self._segment_coordinate,
+                in_axes=(0, None),
+                out_axes=0
+            )(xi, self.xi_edges)
             a_in = vmap(
                 self._heat_extraction_rate_a_in,
-                in_axes=(0, None, None, None),
+                in_axes=(0, 0, None, None, None, None, None),
                 out_axes=0
-            )(xi, m_flow, cp_f, beta_ij)
+            )(
+                xi_p,
+                index,
+                m_flow_pipe,
+                cp_f,
+                beta_ij,
+                self._top_connectivity,
+                self._s_coefs
+            )
             a_b = vmap(
                 self._heat_extraction_rate_a_b,
-                in_axes=(0, None, None, None),
+                in_axes=(0, 0, None, None, None, None, None, None, None, None, None),
                 out_axes=0
-            )(xi, m_flow, cp_f, beta_ij)
+            )(
+                xi_p,
+                index,
+                m_flow_pipe,
+                cp_f,
+                beta_ij,
+                self._top_connectivity,
+                self._s_coefs,
+                self._J_coefs,
+                self.basis._psi_coefs,
+                self.basis._x_gl,
+                self.basis._w_gl
+            )
         else:
+            xi_p, index = self._segment_coordinate(xi, self.xi_edges)
             a_in = self._heat_extraction_rate_a_in(
-                xi, m_flow, cp_f, beta_ij)
+                xi_p,
+                index,
+                m_flow_pipe,
+                cp_f,
+                beta_ij,
+                self._top_connectivity,
+                self._s_coefs
+            )
             a_b = self._heat_extraction_rate_a_b(
-                xi, m_flow, cp_f, beta_ij)
+                xi_p,
+                index,
+                m_flow_pipe,
+                cp_f,
+                beta_ij,
+                self._top_connectivity,
+                self._s_coefs,
+                self._J_coefs,
+                self.basis._psi_coefs,
+                self.basis._x_gl,
+                self.basis._w_gl
+            )
         return a_in, a_b
 
-    def _heat_extraction_rate_a_in(self, xi: float, m_flow: float, cp_f: float, beta_ij: Array) -> float:
-        """Inlet coefficient to evaluate the heat extraction rate.
+    def _heat_extraction_rate_to_self(self, m_flow: float, cp_f: float) -> Tuple[Array | float, Array]:
+        """Coefficients to evaluate the heat extraction rate.
 
         Parameters
         ----------
-        xi : float
-            Coordinate along the borehole.
         m_flow : float
             Fluid mass flow rate (in kg/s).
         cp_f : float
             Fluid specific isobaric heat capacity (in J/kg-K).
-        beta_ij: array
-            (`n_pipes`, `n_pipes`,) array of thermal conductance
-            coefficients.
 
         Returns
         -------
-        float
-            Coefficient for the inlet fluid temperature.
-
-        """
-        b_in = self._fluid_temperature_a_in(xi, beta_ij)
-        R_d = 1 / (self._m_flow_factor * m_flow * cp_f * beta_ij)
-        R_d_diag = jnp.diag(R_d)
-        G_d_diag = 1 / R_d_diag
-        a_in = -G_d_diag @ b_in
-        return a_in
-
-    def _heat_extraction_rate_a_b(self, xi: float, m_flow: float, cp_f: float, beta_ij: Array) -> Array:
-        """Borehole wall coefficient to evaluate the heat extraction rate.
-
-        Parameters
-        ----------
-        xi : array or float
-            Coordinate along the borehole.
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
-        beta_ij: array
-            (`n_pipes`, `n_pipes`,) array of thermal conductance coefficients.
-
-        Returns
-        -------
-        array
-            (`n_nodes`,) array of coefficients for the borehole wall
+        a_in : array or float
+            (`n_nodes`,) array of coefficients for the inlet fluid temperature.
+        a_b : array
+            (`n_nodes`, `n_nodes`,) array of coefficients for the borehole wall
             temperature.
 
         """
-        b_b = self._fluid_temperature_a_b(xi, beta_ij)
-        R_d = 1 / (self._m_flow_factor * m_flow * cp_f * beta_ij)
-        R_d_diag = jnp.diag(R_d)
-        G_d_diag = 1 / R_d_diag
-        R_b = 1 / (1 / R_d_diag).sum()
-        a_b = -G_d_diag @ b_b + self.f_psi(xi) * G_d_diag.sum()
-        return a_b
+        m_flow_pipe = self.m_flow_pipe(m_flow)
+        beta_ij = self._beta_ij(m_flow, cp_f)
+        xi_p = self.basis.xi
+        index = jnp.arange(self.n_segments)
+        a_in = vmap(
+            vmap(
+                self._heat_extraction_rate_a_in,
+                in_axes=(0, None, None, None, None, None, None),
+                out_axes=0),
+            in_axes=(None, 0, None, None, None, None, None),
+            out_axes=0
+        )(
+            xi_p,
+            index,
+            m_flow_pipe,
+            cp_f,
+            beta_ij,
+            self._top_connectivity,
+            self._s_coefs
+        )
+        a_b = vmap(
+            vmap(
+                self._heat_extraction_rate_a_b,
+                in_axes=(0, None, None, None, None, None, None, None, None, None, None),
+                out_axes=0),
+            in_axes=(None, 0, None, None, None, None, None, None, None, None, None),
+            out_axes=0
+        )(
+            xi_p,
+            index,
+            m_flow_pipe,
+            cp_f,
+            beta_ij,
+            self._top_connectivity,
+            self._s_coefs,
+            self._J_coefs,
+            self.basis._psi_coefs,
+            self.basis._x_gl,
+            self.basis._w_gl
+        )
+        return a_in.flatten(), a_b.reshape(self.n_nodes, self.n_nodes)
 
     def _outlet_fluid_temperature(self, m_flow: float, cp_f: float) -> Tuple[float, Array]:
         """Coefficients to evaluate the outlet fluid temperature.
@@ -510,12 +597,234 @@ class _Tube(Borehole, ABC):
 
         """
         beta_ij = self._beta_ij(m_flow, cp_f)
-        a_in = self._outlet_fluid_temperature_a_in(beta_ij)
-        a_b = self._outlet_fluid_temperature_a_b(beta_ij)
+        a_in = self._outlet_fluid_temperature_a_in(
+            beta_ij,
+            self._top_connectivity,
+            self._mixing,
+            self._s_coefs
+        )
+        a_b = self._outlet_fluid_temperature_a_b(
+            beta_ij,
+            self._top_connectivity,
+            self._mixing,
+            self._s_coefs,
+            self._J_coefs,
+            self.basis._psi_coefs,
+            self.basis._x_gl,
+            self.basis._w_gl
+        )
         return a_in, a_b
 
+    @staticmethod
     @abstractmethod
-    def _outlet_fluid_temperature_a_in(self, beta_ij: Array) -> float:
+    def _fluid_temperature_a_in(xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array) -> Array:
+        """Inlet coefficient to evaluate the fluid temperatures.
+
+        Parameters
+        ----------
+        xi_p : float
+            Coordinate along the borehole segment.
+        index : int
+            Index of the borehole segment.
+        beta_ij : array
+            (`n_pipes`, `n_pipes`,) array of thermal conductance
+            coefficients.
+        top_connectivity : tuple of array
+            Tuple of two arrays (``c_in`` and ``c_u``) of shape
+            (`n_pipes`/2,) and (`n_pipes`/2, `n_pipes`/2,). The two
+            arrays give the relation between the inlet fluid temperature,
+            the fluid temperatures at the top-end of the borehole in the
+            upward flowing pipes, and the fluid temperatures at the top-end
+            of the borehole in the downward flowing pipes following the
+            relation: ``T_fd = c_in * T_f_in + c_u @ T_fu``.
+        s_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the longitudinal position (in meters) along
+            the borehole as a function of `xi_p`.
+
+        Returns
+        -------
+        array
+            (`n_pipes`,) array of coefficients for the inlet fluid
+            temperature.
+
+        """
+        ...
+
+    @staticmethod
+    @abstractmethod
+    def _fluid_temperature_a_b(xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+        """Borehole wall coefficient to evaluate the fluid temperatures.
+
+        Parameters
+        ----------
+        xi_p : float
+            Coordinate along the borehole segment.
+        index : int
+            Index of the borehole segment.
+        beta_ij : array
+            (`n_pipes`, `n_pipes`,) array of thermal conductance
+            coefficients.
+        top_connectivity : tuple of array
+            Tuple of two arrays (``c_in`` and ``c_u``) of shape
+            (`n_pipes`/2,) and (`n_pipes`/2, `n_pipes`/2,). The two
+            arrays give the relation between the inlet fluid temperature,
+            the fluid temperatures at the top-end of the borehole in the
+            upward flowing pipes, and the fluid temperatures at the top-end
+            of the borehole in the downward flowing pipes following the
+            relation: ``T_fd = c_in * T_f_in + c_u @ T_fu``.
+        s_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the longitudinal position (in meters) along
+            the borehole segments as a function of `xi_p`.
+        J_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the norm of the jacobian (in meters) along
+            the borehole segments as a function of `xi_p`.
+        psi_coefs : array
+            (`n_nodes`, `n_nodes`,) array of polynomial coefficients
+            for the evaluation of the polynomial basis functions along
+            the borehole segments as a function of `xi_p`.
+        x : array
+            Array of coordinates along the borehole segment to evaluate the
+            integrand function.
+        w : array
+            Integration weights associated with coordinates `x`.
+
+        Returns
+        -------
+        array
+            (`n_pipes`, `n_nodes`,) array of coefficients for the borehole wall
+            temperature.
+
+        """
+        ...
+
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _heat_extraction_rate_a_in(cls, xi_p: float, index: int, m_flow_pipe: float, cp_f: float, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array) -> float:
+        """Inlet coefficient to evaluate the heat extraction rate.
+
+        Parameters
+        ----------
+        xi_p : float
+            Coordinate along the borehole segment.
+        index : int
+            Index of the borehole segment.
+        m_flow_pipe : float
+            Fluid mass flow rate in the pipes (in kg/s).
+        cp_f : float
+            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (`n_pipes`, `n_pipes`,) array of thermal conductance
+            coefficients.
+        top_connectivity : tuple of array
+            Tuple of two arrays (``c_in`` and ``c_u``) of shape
+            (`n_pipes`/2,) and (`n_pipes`/2, `n_pipes`/2,). The two
+            arrays give the relation between the inlet fluid temperature,
+            the fluid temperatures at the top-end of the borehole in the
+            upward flowing pipes, and the fluid temperatures at the top-end
+            of the borehole in the downward flowing pipes following the
+            relation: ``T_fd = c_in * T_f_in + c_u @ T_fu``.
+        s_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the longitudinal position (in meters) along
+            the borehole segments as a function of `xi_p`.
+
+        Returns
+        -------
+        float
+            Coefficient for the inlet fluid temperature.
+
+        """
+        b_in = cls._fluid_temperature_a_in(
+            xi_p,
+            index,
+            beta_ij,
+            top_connectivity,
+            s_coefs
+        )
+        R_d = 1 / (m_flow_pipe * cp_f * beta_ij)
+        R_d_diag = jnp.diag(R_d)
+        G_d_diag = 1 / R_d_diag
+        a_in = -G_d_diag @ b_in
+        return a_in
+
+    @classmethod
+    @partial(jit, static_argnames=['cls'])
+    def _heat_extraction_rate_a_b(cls, xi_p: float, index: int, m_flow_pipe: float, cp_f: float, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+        """Borehole wall coefficient to evaluate the heat extraction rate.
+
+        Parameters
+        ----------
+        xi_p : float
+            Coordinate along the borehole segment.
+        index : int
+            Index of the borehole segment.
+        m_flow_pipe : float
+            Fluid mass flow rate (in kg/s).
+        cp_f : float
+            Fluid specific isobaric heat capacity (in J/kg-K).
+        beta_ij: array
+            (`n_pipes`, `n_pipes`,) array of thermal conductance coefficients.
+        top_connectivity : tuple of array
+            Tuple of two arrays (``c_in`` and ``c_u``) of shape
+            (`n_pipes`/2,) and (`n_pipes`/2, `n_pipes`/2,). The two
+            arrays give the relation between the inlet fluid temperature,
+            the fluid temperatures at the top-end of the borehole in the
+            upward flowing pipes, and the fluid temperatures at the top-end
+            of the borehole in the downward flowing pipes following the
+            relation: ``T_fd = c_in * T_f_in + c_u @ T_fu``.
+        s_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the longitudinal position (in meters) along
+            the borehole segments as a function of `xi_p`.
+        J_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the norm of the jacobian (in meters) along
+            the borehole segments as a function of `xi_p`.
+        psi_coefs : array
+            (`n_nodes`, `n_nodes`,) array of polynomial coefficients
+            for the evaluation of the polynomial basis functions along
+            the borehole segments as a function of `xi_p`.
+        x : array
+            Array of coordinates along the borehole segment to evaluate the
+            integrand function.
+        w : array
+            Integration weights associated with coordinates `x`.
+
+        Returns
+        -------
+        array
+            (`n_nodes`,) array of coefficients for the borehole wall
+            temperature.
+
+        """
+        # xi_p, index = self._segment_coordinate(xi, self.xi_edges)
+        a_b = jnp.zeros((jnp.shape(s_coefs)[1], jnp.shape(psi_coefs)[0]))
+        b_b = cls._fluid_temperature_a_b(
+            xi_p,
+            index,
+            beta_ij,
+            top_connectivity,
+            s_coefs,
+            J_coefs,
+            psi_coefs,
+            x,
+            w
+        )
+        R_d = 1 / (m_flow_pipe * cp_f * beta_ij)
+        R_d_diag = jnp.diag(R_d)
+        G_d_diag = 1 / R_d_diag
+        R_b = 1 / (1 / R_d_diag).sum()
+        psi = Basis._f_psi(xi_p, psi_coefs)
+        a_b = a_b.at[index, :].set(psi * G_d_diag.sum()).flatten()
+        a_b = a_b.at[:].add(-G_d_diag @ b_b)
+        return a_b
+
+    @staticmethod
+    @abstractmethod
+    def _outlet_fluid_temperature_a_in(beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array) -> float:
         """Inlet coefficient to evaluate the outlet fluid temperature.
 
         Parameters
@@ -523,6 +832,23 @@ class _Tube(Borehole, ABC):
         beta_ij: array
             (`n_pipes`, `n_pipes`,) array of thermal conductance
             coefficients.
+        top_connectivity : tuple of array
+            Tuple of two arrays (``c_in`` and ``c_u``) of shape
+            (`n_pipes`/2,) and (`n_pipes`/2, `n_pipes`/2,). The two
+            arrays give the relation between the inlet fluid temperature,
+            the fluid temperatures at the top-end of the borehole in the
+            upward flowing pipes, and the fluid temperatures at the top-end
+            of the borehole in the downward flowing pipes following the
+            relation: ``T_fd = c_in * T_f_in + c_u @ T_fu``.
+        mixing : array
+            (`n_pipes`/2,) array of coefficients to evaluate the outlet fluid
+            temperature from the fluid temperatures at the top-end of the
+            borehole in the upward flowing pipes following the relation:
+            ``T_f_out = mixing @ T_fu``.
+        s_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the longitudinal position (in meters) along
+            the borehole segments as a function of `xi_p`.
 
         Returns
         -------
@@ -532,8 +858,9 @@ class _Tube(Borehole, ABC):
         """
         ...
 
+    @staticmethod
     @abstractmethod
-    def _outlet_fluid_temperature_a_b(self, beta_ij: Array) -> Array:
+    def _outlet_fluid_temperature_a_b(beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
         """Borehole coefficient to evaluate the outlet fluid temperature.
 
         Parameters
@@ -541,6 +868,36 @@ class _Tube(Borehole, ABC):
         beta_ij: array
             (`n_pipes`, `n_pipes`,) array of thermal conductance
             coefficients.
+        top_connectivity : tuple of array
+            Tuple of two arrays (``c_in`` and ``c_u``) of shape
+            (`n_pipes`/2,) and (`n_pipes`/2, `n_pipes`/2,). The two
+            arrays give the relation between the inlet fluid temperature,
+            the fluid temperatures at the top-end of the borehole in the
+            upward flowing pipes, and the fluid temperatures at the top-end
+            of the borehole in the downward flowing pipes following the
+            relation: ``T_fd = c_in * T_f_in + c_u @ T_fu``.
+        mixing : array
+            (`n_pipes`/2,) array of coefficients to evaluate the outlet fluid
+            temperature from the fluid temperatures at the top-end of the
+            borehole in the upward flowing pipes following the relation:
+            ``T_f_out = mixing @ T_fu``.
+        s_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the longitudinal position (in meters) along
+            the borehole segments as a function of `xi_p`.
+        J_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the norm of the jacobian (in meters) along
+            the borehole segments as a function of `xi_p`.
+        psi_coefs : array
+            (`n_nodes`, `n_nodes`,) array of polynomial coefficients
+            for the evaluation of the polynomial basis functions along
+            the borehole segments as a function of `xi_p`.
+        x : array
+            Array of coordinates along the borehole segment to evaluate the
+            integrand function.
+        w : array
+            Integration weights associated with coordinates `x`.
 
         Returns
         -------
@@ -550,25 +907,6 @@ class _Tube(Borehole, ABC):
 
         """
         ...
-
-    def _beta_ij(self, m_flow: float, cp_f: float) -> Array:
-        """Thermal conductance coefficients.
-
-        Parameters
-        ----------
-        m_flow : float
-            Fluid mass flow rate (in kg/s).
-        cp_f : float
-            Fluid specific isobaric heat capacity (in J/kg-K).
-
-        Returns
-        -------
-        array
-            (`n_pipes`, `n_pipes`,) array of thermal conductance
-            coefficients.
-
-        """
-        return 1. / (self._m_flow_factor * m_flow * cp_f * self.thermal_resistances(m_flow))
 
     @classmethod
     def from_dimensions(cls, R_d: ArrayLike | Callable[[float], Array], L: float, D: float, r_b: float, x: float, y: float, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None, parallel: bool = True) -> Self:

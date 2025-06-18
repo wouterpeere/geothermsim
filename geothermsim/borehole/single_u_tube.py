@@ -1,15 +1,12 @@
 # -*- coding: utf-8 -*-
-from collections.abc import Callable
-from functools import partial
-from typing import Self, Tuple
+from typing import Tuple
 
 from jax import numpy as jnp
 from jax import Array, jit, vmap
-from jax.typing import ArrayLike
+from jax.lax import fori_loop
 
 from ._tube import _Tube
 from ..basis import Basis
-from ..path import Path
 
 
 class SingleUTube(_Tube):
@@ -66,16 +63,32 @@ class SingleUTube(_Tube):
 
     """
 
-    def _fluid_temperature_a_in(self, xi: float, beta_ij: Array) -> Array:
+    @staticmethod
+    @jit
+    def _fluid_temperature_a_in(xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array) -> Array:
         """Inlet coefficient to evaluate the fluid temperatures.
 
         Parameters
         ----------
-        xi : float
-            Coordinate along the borehole.
-        beta_ij: array
+        xi_p : float
+            Coordinate along the borehole segment.
+        index : int
+            Index of the borehole segment.
+        beta_ij : array
             (`n_pipes`, `n_pipes`,) array of thermal conductance
             coefficients.
+        top_connectivity : tuple of array
+            Tuple of two arrays (``c_in`` and ``c_u``) of shape
+            (`n_pipes`/2,) and (`n_pipes`/2, `n_pipes`/2,). The two
+            arrays give the relation between the inlet fluid temperature,
+            the fluid temperatures at the top-end of the borehole in the
+            upward flowing pipes, and the fluid temperatures at the top-end
+            of the borehole in the downward flowing pipes following the
+            relation: ``T_fd = c_in * T_f_in + c_u @ T_fu``.
+        s_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the longitudinal position (in meters) along
+            the borehole as a function of `xi_p`.
 
         Returns
         -------
@@ -84,22 +97,54 @@ class SingleUTube(_Tube):
             temperature.
 
         """
-        b_in = self._outlet_fluid_temperature_a_in(beta_ij)
-        c_in = self._general_solution_a_in(xi, beta_ij)
-        c_out = self._general_solution_a_out(xi, beta_ij)
+        b_in = SingleUTube._outlet_fluid_temperature_a_in(
+            beta_ij, top_connectivity, None, s_coefs)
+        c_in = SingleUTube._general_solution_a_in(
+            xi_p, index, beta_ij, s_coefs)
+        c_out = SingleUTube._general_solution_a_out(
+            xi_p, index, beta_ij, s_coefs)
         a_in = c_in + b_in * c_out
         return a_in
 
-    def _fluid_temperature_a_b(self, xi: float, beta_ij: Array) -> Array:
+    @staticmethod
+    @jit
+    def _fluid_temperature_a_b(xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
         """Borehole wall coefficient to evaluate the fluid temperatures.
 
         Parameters
         ----------
-        xi : float
-            Coordinate along the borehole.
-        beta_ij: array
+        xi_p : float
+            Coordinate along the borehole segment.
+        index : int
+            Index of the borehole segment.
+        beta_ij : array
             (`n_pipes`, `n_pipes`,) array of thermal conductance
             coefficients.
+        top_connectivity : tuple of array
+            Tuple of two arrays (``c_in`` and ``c_u``) of shape
+            (`n_pipes`/2,) and (`n_pipes`/2, `n_pipes`/2,). The two
+            arrays give the relation between the inlet fluid temperature,
+            the fluid temperatures at the top-end of the borehole in the
+            upward flowing pipes, and the fluid temperatures at the top-end
+            of the borehole in the downward flowing pipes following the
+            relation: ``T_fd = c_in * T_f_in + c_u @ T_fu``.
+        s_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the longitudinal position (in meters) along
+            the borehole segments as a function of `xi_p`.
+        J_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the norm of the jacobian (in meters) along
+            the borehole segments as a function of `xi_p`.
+        psi_coefs : array
+            (`n_nodes`, `n_nodes`,) array of polynomial coefficients
+            for the evaluation of the polynomial basis functions along
+            the borehole segments as a function of `xi_p`.
+        x : array
+            Array of coordinates along the borehole segment to evaluate the
+            integrand function.
+        w : array
+            Integration weights associated with coordinates `x`.
 
         Returns
         -------
@@ -108,21 +153,32 @@ class SingleUTube(_Tube):
             borehole wall temperature.
 
         """
-        b_b = self._outlet_fluid_temperature_a_b(beta_ij)
-        c_out = self._general_solution_a_out(xi, beta_ij)
-        c_b = self._general_solution_a_b(xi, beta_ij)
+        b_b = SingleUTube._outlet_fluid_temperature_a_b(
+            beta_ij, top_connectivity, None, s_coefs, J_coefs, psi_coefs, x, w)
+        c_out = SingleUTube._general_solution_a_out(
+            xi_p, index, beta_ij, s_coefs)
+        c_b = SingleUTube._general_solution_a_b(
+            xi_p, index, beta_ij, s_coefs, J_coefs, psi_coefs, x, w)
         a_b = c_b + jnp.outer(c_out, b_b)
         return a_b
 
-    def _general_solution_a_in(self, xi: float, beta_ij: Array) -> Array:
+    @staticmethod
+    @jit
+    def _general_solution_a_in(xi_p: float, index: int, beta_ij: Array, s_coefs: Array) -> Array:
         """Inlet coefficient to evaluate the general solution.
 
         Parameters
         ----------
-        xi : float
-            Coordinate along the borehole.
+        xi_p : float
+            Coordinate along the borehole segment.
+        index : int
+            Index of the borehole segment.
         beta_ij: array
             (2, 2,) array of thermal conductance coefficients.
+        s_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the longitudinal position (in meters) along
+            the borehole segments as a function of `xi_p`.
 
         Returns
         -------
@@ -130,21 +186,29 @@ class SingleUTube(_Tube):
             (2,) array of coefficients for the inlet fluid temperature.
 
         """
-        s = self.path.f_s(xi)
+        s = SingleUTube._longitudinal_position(xi_p, index, s_coefs)
         a_in = jnp.array(
-            [self._f1(s, beta_ij), -self._f2(s, beta_ij)]
+            [SingleUTube._f1(s, beta_ij), -SingleUTube._f2(s, beta_ij)]
         )
         return a_in
 
-    def _general_solution_a_out(self, xi: float, beta_ij: Array) -> Array:
+    @staticmethod
+    @jit
+    def _general_solution_a_out(xi_p: float, index: int, beta_ij: Array, s_coefs: Array) -> Array:
         """Outlet coefficient to evaluate the general solution.
 
         Parameters
         ----------
-        xi : float
-            Coordinate along the borehole.
+        xi_p : float
+            Coordinate along the borehole segment.
+        index : int
+            Index of the borehole segment.
         beta_ij: array
             (2, 2,) array of thermal conductance coefficients.
+        s_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the longitudinal position (in meters) along
+            the borehole segments as a function of `xi_p`.
 
         Returns
         -------
@@ -153,21 +217,42 @@ class SingleUTube(_Tube):
             temperature.
 
         """
-        s = self.path.f_s(xi)
+        s = SingleUTube._longitudinal_position(xi_p, index, s_coefs)
         a_out = jnp.array(
-            [self._f2(s, beta_ij), self._f3(s, beta_ij)]
+            [SingleUTube._f2(s, beta_ij), SingleUTube._f3(s, beta_ij)]
         )
         return a_out
 
-    def _general_solution_a_b(self, xi: float, beta_ij: Array) -> Array:
+    @staticmethod
+    @jit
+    def _general_solution_a_b(xi_p: float, index: int, beta_ij: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
         """Borehole wall coefficient to evaluate the general solution.
 
         Parameters
         ----------
-        xi : float
-            Coordinate along the borehole.
+        xi_p : float
+            Coordinate along the borehole segment.
+        index : int
+            Index of the borehole segment.
         beta_ij: array
             (2, 2,) array of thermal conductance coefficients.
+        s_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the longitudinal position (in meters) along
+            the borehole segments as a function of `xi_p`.
+        J_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the norm of the jacobian (in meters) along
+            the borehole segments as a function of `xi_p`.
+        psi_coefs : array
+            (`n_nodes`, `n_nodes`,) array of polynomial coefficients
+            for the evaluation of the polynomial basis functions along
+            the borehole segments as a function of `xi_p`.
+        x : array
+            Array of coordinates along the borehole segment to evaluate the
+            integrand function.
+        w : array
+            Integration weights associated with coordinates `x`.
 
         Returns
         -------
@@ -176,61 +261,89 @@ class SingleUTube(_Tube):
             temperature.
 
         """
-        # Longitudinal position to evaluate the solution
-        s_xi = self.path.f_s(xi)
-        # Upper bound of integration along each segment
-        high = jnp.maximum(-1., jnp.minimum(1., self.f_xi_bs(xi)))
-        # Coordinates of the top and bottom edges of the segments
-        a, b = self.xi_edges[:-1], self.xi_edges[1:]
+        # Initialize coefficients
+        n_pipes = jnp.shape(beta_ij)[0]
+        n_segments = jnp.shape(s_coefs)[1]
+        n_nodes = jnp.shape(psi_coefs)[0]
+        a_b = jnp.zeros((n_pipes, n_segments, n_nodes))
+        # Longitudinal position corresponding to coordinate `xi_p`
+        s = SingleUTube._longitudinal_position(xi_p, index, s_coefs)
 
-        def f_xi_sb(_zeta_p: float, _a: float, _b: float) -> float:
-            """Borehole coordinate from segment coordinate and edges"""
-            return 0.5 * (_b + _a) + 0.5 * _zeta_p * (_b - _a)
+        # Evaluation of the integral along segments above the segment `index`
+        def integral_segment_above_point(i, a_b):
+            # Longitudinal positions, norms of Jacobian and basis functions
+            # at integration points
+            t = SingleUTube._longitudinal_position(x, i, s_coefs)
+            J = SingleUTube._norm_of_jacobian(x, i, J_coefs)
+            psi = vmap(
+                Basis._f_psi,
+                in_axes=(0, None),
+                out_axes=-1
+            )(x, psi_coefs)
 
-        def integral_f4(_a: float, _b: float, _high: float, _ratio: float) -> Array:
-            """Integral involving the function f4."""
-            def integrand_f4(_zeta_p: float) -> float:
-                """Integrand involving the function f4."""
-                _eta = f_xi_sb(_zeta_p, _a, _b)
-                s_eta = self.path.f_s(_eta)
-                return self._f4(s_xi - s_eta, beta_ij) * self.path.f_J(_eta)
+            # Integral of the function f4
+            integrand_f4 = J * SingleUTube._f4(s - t, beta_ij)
+            a_b = a_b.at[0, i, :].set(
+                (integrand_f4 * psi) @ w)
+            # Integral of the function f5
+            integrand_f5 = -J * SingleUTube._f5(s - t, beta_ij)
+            a_b = a_b.at[1, i, :].set(
+                (integrand_f5 * psi) @ w)
+            return a_b
+        a_b = fori_loop(0, index, integral_segment_above_point, a_b)
 
-            return self.basis.quad_gl(integrand_f4, -1, _high) * _ratio
+        # Evaluation of the integral along segment `index`
+        # Ratio of the segment from top to the evaluation point
+        factor = 0.5 * (xi_p + 1)
+        # Rescale integration points and weights
+        x = factor * (x + 1) - 1
+        w = factor * w
+        # Longitudinal positions, norms of Jacobian and basis functions
+        # at integration points
+        t = SingleUTube._longitudinal_position(x, index, s_coefs)
+        J = SingleUTube._norm_of_jacobian(x, index, J_coefs)
+        psi = vmap(
+            Basis._f_psi,
+            in_axes=(0, None),
+            out_axes=-1
+        )(x, psi_coefs)
 
-        def integral_f5(_a: float, _b: float, _high: float, _ratio: float) -> Array:
-            """Integral involving the function f5."""
-            def integrand_f5(_zeta_p: float) -> float:
-                """Integrand involving the function f5."""
-                _eta = f_xi_sb(_zeta_p, _a, _b)
-                s_eta = self.path.f_s(_eta)
-                return -self._f5(s_xi - s_eta, beta_ij) * self.path.f_J(_eta)
+        # Integral of the function f4
+        integrand_f4 = J * SingleUTube._f4(s - t, beta_ij)
+        a_b = a_b.at[0, index, :].set(
+                (integrand_f4 * psi) @ w)
+        # Integral of the function f5
+        integrand_f5 = -J * SingleUTube._f5(s - t, beta_ij)
+        a_b = a_b.at[1, index, :].set(
+                (integrand_f5 * psi) @ w)
+        return a_b.reshape(2, -1)
 
-            return self.basis.quad_gl(integrand_f5, -1, _high) * _ratio
-
-        a_b = jnp.stack(
-            [
-                vmap(
-                    integral_f4,
-                    in_axes=(0, 0, 0, 0),
-                    out_axes=0
-                )(a, b, high, self.segment_ratios),
-                vmap(
-                    integral_f5,
-                    in_axes=(0, 0, 0, 0),
-                    out_axes=0
-                )(a, b, high, self.segment_ratios)
-            ],
-            axis=0
-        ).reshape(self.n_pipes, self.n_nodes)
-        return a_b
-
-    def _outlet_fluid_temperature_a_in(self, beta_ij: Array) -> float:
+    @staticmethod
+    @jit
+    def _outlet_fluid_temperature_a_in(beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array) -> float:
         """Inlet coefficient to evaluate the outlet fluid temperature.
 
         Parameters
         ----------
         beta_ij: array
             (2, 2,) array of thermal conductance coefficients.
+        top_connectivity : tuple of array
+            Tuple of two arrays (``c_in`` and ``c_u``) of shape
+            (`n_pipes`/2,) and (`n_pipes`/2, `n_pipes`/2,). The two
+            arrays give the relation between the inlet fluid temperature,
+            the fluid temperatures at the top-end of the borehole in the
+            upward flowing pipes, and the fluid temperatures at the top-end
+            of the borehole in the downward flowing pipes following the
+            relation: ``T_fd = c_in * T_f_in + c_u @ T_fu``.
+        mixing : array
+            (`n_pipes`/2,) array of coefficients to evaluate the outlet fluid
+            temperature from the fluid temperatures at the top-end of the
+            borehole in the upward flowing pipes following the relation:
+            ``T_f_out = mixing @ T_fu``.
+        s_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the longitudinal position (in meters) along
+            the borehole segments as a function of `xi_p`.
 
         Returns
         -------
@@ -238,17 +351,52 @@ class SingleUTube(_Tube):
             Coefficient for the inlet fluid temperature.
 
         """
-        L = self.L
-        a_in = (self._f1(L, beta_ij) + self._f2(L, beta_ij)) / (self._f3(L, beta_ij) - self._f2(L, beta_ij))
+        n_segments = jnp.shape(s_coefs)[1]
+        L = SingleUTube._longitudinal_position(1., n_segments, s_coefs)
+        a_in = (
+            SingleUTube._f1(L, beta_ij) + SingleUTube._f2(L, beta_ij)
+        ) / (SingleUTube._f3(L, beta_ij) - SingleUTube._f2(L, beta_ij))
         return a_in
 
-    def _outlet_fluid_temperature_a_b(self, beta_ij: Array) -> Array:
+    @staticmethod
+    @jit
+    def _outlet_fluid_temperature_a_b(beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
         """Borehole coefficient to evaluate the outlet fluid temperature.
 
         Parameters
         ----------
         beta_ij: array
             (2, 2,) array of thermal conductance coefficients.
+        top_connectivity : tuple of array
+            Tuple of two arrays (``c_in`` and ``c_u``) of shape
+            (`n_pipes`/2,) and (`n_pipes`/2, `n_pipes`/2,). The two
+            arrays give the relation between the inlet fluid temperature,
+            the fluid temperatures at the top-end of the borehole in the
+            upward flowing pipes, and the fluid temperatures at the top-end
+            of the borehole in the downward flowing pipes following the
+            relation: ``T_fd = c_in * T_f_in + c_u @ T_fu``.
+        mixing : array
+            (`n_pipes`/2,) array of coefficients to evaluate the outlet fluid
+            temperature from the fluid temperatures at the top-end of the
+            borehole in the upward flowing pipes following the relation:
+            ``T_f_out = mixing @ T_fu``.
+        s_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the longitudinal position (in meters) along
+            the borehole segments as a function of `xi_p`.
+        J_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the norm of the jacobian (in meters) along
+            the borehole segments as a function of `xi_p`.
+        psi_coefs : array
+            (`n_nodes`, `n_nodes`,) array of polynomial coefficients
+            for the evaluation of the polynomial basis functions along
+            the borehole segments as a function of `xi_p`.
+        x : array
+            Array of coordinates along the borehole segment to evaluate the
+            integrand function.
+        w : array
+            Integration weights associated with coordinates `x`.
 
         Returns
         -------
@@ -257,40 +405,38 @@ class SingleUTube(_Tube):
             temperature.
 
         """
-        # Borehole length
-        L = self.L
-        # Coordinates of the top and bottom edges of the segments
-        a, b = self.xi_edges[:-1], self.xi_edges[1:]
+        n_segments = jnp.shape(s_coefs)[1]
+        L = SingleUTube._longitudinal_position(1., n_segments, s_coefs)
+        one_over_f3_minus_f2 = 1 / (SingleUTube._f3(L, beta_ij) - SingleUTube._f2(L, beta_ij))
 
-        def f_xi_sb(_eta_p: float, _a: float, _b: float) -> float:
-            """Borehole coordinate from segment coordinate and edges"""
-            return 0.5 * (_b + _a) + 0.5 * _eta_p * (_b - _a)
-
-        one_over_f3_minus_f2 = 1 / (self._f3(L, beta_ij) - self._f2(L, beta_ij))
-        def integral_outlet_fluid_temperature(_a: float, _b: float, _ratio: float):
-            """Integral for the evaluation of the outlet fluid temperature."""
-            def integrand_outlet_fluid_temperature(_eta_p: float):
-                """Integrand for the evaluation of the outlet fluid temperature."""
-                _eta = f_xi_sb(_eta_p, _a, _b)
-                s_eta = self.path.f_s(_eta)
-                J_eta = self.path.f_J(_eta)
-                integrand = one_over_f3_minus_f2 * J_eta * (
-                    self._f4(L - s_eta, beta_ij)
-                    + self._f5(L - s_eta, beta_ij)
-                    )
-                return integrand
-
-            integral = self.basis.quad_gl(
-                integrand_outlet_fluid_temperature, -1, 1
-            ) * _ratio
-            return integral
-
-        a_b = vmap(
-            integral_outlet_fluid_temperature,
-            in_axes=(0, 0, 0),
+        # Longitudinal positions, norms of Jacobian and basis functions
+        t = vmap(
+            SingleUTube._longitudinal_position,
+            in_axes=(None, 0, None),
             out_axes=0
-            )(a, b, self.segment_ratios)
-        return a_b
+        )(x, jnp.arange(n_segments), s_coefs)
+        J = vmap(
+            SingleUTube._norm_of_jacobian,
+            in_axes=(None, 0, None),
+            out_axes=0
+        )(x, jnp.arange(n_segments), J_coefs)
+        psi = vmap(
+            Basis._f_psi,
+            in_axes=(0, None),
+            out_axes=-1
+        )(x, psi_coefs)
+
+        # Integral of the function
+        integrand = one_over_f3_minus_f2 * J * (
+            SingleUTube._f4(L - t, beta_ij)
+            + SingleUTube._f5(L - t, beta_ij)
+            )
+        a_b = vmap(
+            jnp.outer,
+            in_axes=(-1, -1),
+            out_axes=-1
+        )(integrand, psi) @ w
+        return a_b.flatten()
 
     @staticmethod
     def _beta(beta_ij: Array) -> float:
