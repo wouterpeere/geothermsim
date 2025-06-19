@@ -121,12 +121,12 @@ class CoaxialHeatExchanger(_GroundHeatExchanger):
             conduction_thermal_resistance_circular_pipe,
             in_axes=(0, 0, 0),
             out_axes=0
-        )(self._r_p_in_inner, self._r_p_out_inner, self.k_p)
+        )(self._r_p_in_inner, self._r_p_out_inner, self.k_p[self.indices_inner])
         self.R_p_outer = vmap(
             conduction_thermal_resistance_circular_pipe,
             in_axes=(0, 0, 0),
             out_axes=0
-        )(self._r_p_in_outer, self._r_p_out_outer, self.k_p)
+        )(self._r_p_in_outer, self._r_p_out_outer, self.k_p[self.indices_outer])
 
         # --- Multipole model ---
         self.multipole = Multipole(
