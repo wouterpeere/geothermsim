@@ -47,21 +47,10 @@ class Basis:
         self.order_nodes = order_nodes
 
         # --- Basis functions (psi) ---
-        power = jnp.arange(self.n_nodes)
-        coefs = jnp.linalg.inv(
-            vmap(
-                jnp.power,
-                in_axes=(None, 0),
-                out_axes=1
-            )(self.xi, power)
-        )
-        f_psi = lambda _eta: _eta**power @ coefs
-        self.f_psi = jit(
-            lambda _eta: vmap(f_psi, in_axes=0)(_eta) if len(jnp.shape(_eta)) > 0 else f_psi(_eta)
-        )
-        self.f = jit(
-            lambda _eta, f_nodes: self.f_psi(_eta) @ f_nodes
-        )
+        self._psi_coefs = jnp.polyfit(
+            self.xi,
+            jnp.eye(self.n_nodes),
+            self.n_nodes - 1)
 
         # --- Initialize quadrature methods ---
         self._initialize_quad_methods(order, order_nodes)
@@ -69,6 +58,46 @@ class Basis:
         if w is None:
             w = self.f_psi(self._x_gl).T @ self._w_gl
         self.w = w
+
+    def f(self, xi: float | Array, f_nodes: Array) -> float | Array:
+        """Value at coordinate from values at nodes.
+
+        Parameters
+        ----------
+        xi : float or array
+            Coordinate or (M,) array of coordinates.
+        f_nodes : array
+            (`n_nodes`,) array of values at nodes.
+
+        Returns
+        -------
+        float or array
+            Value or (M,) array of values at requested coordinates
+            evaluated using polynomial basis functions.
+
+        """
+        if len(jnp.shape(xi)) > 0:
+            return vmap(self.f, in_axes=(0, None), out_axes=0)(xi, f_nodes)
+        return self._f(xi, f_nodes, self._psi_coefs)
+
+    def f_psi(self, xi: float | Array) -> Array:
+        """Polynomial basis functions.
+
+        Parameters
+        ----------
+        xi : float or array
+            Coordinate or (M,) array of coordinates.
+
+        Returns
+        -------
+        array
+            (`n_nodes`,) or (M, `n_nodes`,) array of polynomial basis
+            functions.
+
+        """
+        if len(jnp.shape(xi)) > 0:
+            return vmap(self.f_psi, in_axes=0, out_axes=0)(xi)
+        return self._f_psi(xi, self._psi_coefs)
 
     def _initialize_quad_methods(self, order: int, order_nodes: int):
         """Initialize the points and weights for quadrature methods.
@@ -219,6 +248,57 @@ class Basis:
         """
         x, w, psi = self._x_ts_nodes, self._w_ts_nodes, self._psi_ts_nodes
         return self._quad_psi(fun, x, w, psi)
+
+    @staticmethod
+    @jit
+    def _f(xi: float, f_nodes: Array, psi_coefs: Array) -> float:
+        """Value at coordinate from values at nodes.
+
+        Parameters
+        ----------
+        xi : float
+            Coordinate.
+        f_nodes : array
+            (`n_nodes`,) array of values at nodes.
+        psi_coefs : array
+            (`n_nodes`, `n_nodes`,) array of polynomial coefficients
+            for the evaluation of the polynomial basis functions.
+
+        Returns
+        -------
+        float
+            Value at requested coordinate
+            evaluated using polynomial basis functions.
+
+        """
+        psi = Basis._f_psi(xi, psi_coefs)
+        return f_nodes @ psi
+
+    @staticmethod
+    @jit
+    def _f_psi(xi: float, psi_coefs: Array) -> float:
+        """Polynomial basis functions.
+
+        Parameters
+        ----------
+        xi : float
+            Coordinate.
+        psi_coefs : array
+            (`n_nodes`, `n_nodes`,) array of polynomial coefficients
+            for the evaluation of the polynomial basis functions.
+
+        Returns
+        -------
+        array
+            (`n_nodes`,) array of polynomial basis functions.
+
+        """
+        psi = vmap(
+            jnp.polyval,
+            in_axes=(1, None),
+            out_axes=0
+        )(psi_coefs, xi)
+        return psi
 
     @staticmethod
     def _gauss_legendre_rule(order: int) -> Tuple[Array, Array]:
