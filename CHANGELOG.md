@@ -9,6 +9,7 @@
 
 ### Enhancements
 
+* [Issue 9](https://github.com/MassimoCimmino/geothermsim/issues/9) - `GroundHeatExchanger` classes now accept arrays of per-pipe thermal conductivity.
 * [Issue 13](https://github.com/MassimoCimmino/geothermsim/issues/13) - Refactored `Borehole` and `Tube` classes to use jitted helper class and static methods. This decreases the required compilation time when simulating borefields, since now all boreholes rely on the same jitted methods.
 
 
