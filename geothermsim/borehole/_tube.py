@@ -615,9 +615,9 @@ class _Tube(Borehole, ABC):
         )
         return a_in, a_b
 
-    @staticmethod
+    @classmethod
     @abstractmethod
-    def _fluid_temperature_a_in(xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array) -> Array:
+    def _fluid_temperature_a_in(cls, xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array) -> Array:
         """Inlet coefficient to evaluate the fluid temperatures.
 
         Parameters
@@ -651,9 +651,9 @@ class _Tube(Borehole, ABC):
         """
         ...
 
-    @staticmethod
+    @classmethod
     @abstractmethod
-    def _fluid_temperature_a_b(xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    def _fluid_temperature_a_b(cls, xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
         """Borehole wall coefficient to evaluate the fluid temperatures.
 
         Parameters
@@ -821,9 +821,9 @@ class _Tube(Borehole, ABC):
         a_b = a_b.at[:].add(-G_d_diag @ b_b)
         return a_b
 
-    @staticmethod
+    @classmethod
     @abstractmethod
-    def _outlet_fluid_temperature_a_in(beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array) -> float:
+    def _outlet_fluid_temperature_a_in(cls, beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array) -> float:
         """Inlet coefficient to evaluate the outlet fluid temperature.
 
         Parameters
@@ -857,9 +857,9 @@ class _Tube(Borehole, ABC):
         """
         ...
 
-    @staticmethod
+    @classmethod
     @abstractmethod
-    def _outlet_fluid_temperature_a_b(beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    def _outlet_fluid_temperature_a_b(cls, beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
         """Borehole coefficient to evaluate the outlet fluid temperature.
 
         Parameters

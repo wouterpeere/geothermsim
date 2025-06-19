@@ -245,6 +245,21 @@ class Network(Borefield):
         return q
 
     def m_flow_borehole(self, m_flow: float | Array) -> Array:
+        """Fluid mass flow rate into the boreholes.
+
+        Parameters
+        ----------
+        m_flow : float or array
+            Fluid mass flow rate entering the borefield, or (`n_boreholes`,)
+            array of fluid mass flow rate entering each borehole (in kg/s).
+
+        Returns
+        -------
+        array
+            (`n_boreholes`,) array of fluid mass flow rate entering each
+            borehole (in kg/s).
+
+        """
         if len(jnp.shape(m_flow)) == 0 or jnp.shape(m_flow)[0] == 1:
             m_flow = jnp.broadcast_to(
                 m_flow / self.n_boreholes,

@@ -197,7 +197,7 @@ class Borehole:
         Returns
         -------
         float
-            (M,) or (M, 3,) array of positions along the borehole
+            (3,) or (M, 3,) array of positions along the borehole
             (in meters).
 
         """
@@ -482,7 +482,7 @@ class Borehole:
         deg : int
             Polynomial degree to approximate the path along each
             segment. The longitudinal position ``s`` will be approximated
-            using degree ``2 * deg + 2`` polynomials.
+            using degree ``2 * deg - 1`` polynomials.
 
         """
         xi_p = jnp.linspace(-1, 1, num=deg+1)
@@ -512,7 +512,7 @@ class Borehole:
             in_axes=2,
             out_axes=2
         )(self._p_coefs)
-        xi_p = jnp.linspace(-1, 1, num=2*deg+2)
+        xi_p = jnp.linspace(-1, 1, num=2*deg)
         xi = vmap(
             self.f_xi_sb, 
             in_axes=(None, 0),
