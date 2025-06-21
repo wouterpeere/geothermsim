@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
+from functools import partial
 from time import perf_counter
 
 from jax import numpy as jnp
 from jax import Array, jit, vmap
 from jax.typing import ArrayLike
+import numpy as np
 
 from ..borefield.borefield import Borefield
 from ..borefield.network import Network
@@ -224,19 +226,16 @@ class LoadAggregation(_TemporalSuperposition):
             (in seconds).
 
         """
-        time = [0.]
-        i = 0
-        t = 0.
-        while time[-1] < tmax:
-            # Increment cell count
-            i += 1
+        n_time_steps = np.ceil(tmax / dt).astype(int)
+        n_levels = np.ceil(np.log2(1 + np.ceil(n_time_steps / cells_per_level))).astype(int)
+        n_cells = n_levels * cells_per_level
+        time = jnp.zeros(n_cells + 1)
+        for i in range(1, n_cells + 1):
             # Cell size doubles every (cells_per_level) time steps
             v = jnp.ceil(i / cells_per_level)
             width = 2**(v - 1)
-            t += width * dt
-            # Append time vector
-            time.append(t)
-        return jnp.array(time)
+            time = time.at[i].set(time[i - 1] + width * dt)
+        return time
 
     @staticmethod
     def _load_shifting_matrix(time: Array) -> Array:
