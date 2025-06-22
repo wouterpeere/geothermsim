@@ -8,6 +8,7 @@ from jax.lax import fori_loop, switch
 
 from ._tube import _Tube
 from ..basis import Basis
+from ..utilities import quadgl
 
 
 class SingleUTube(_Tube):
@@ -32,6 +33,15 @@ class SingleUTube(_Tube):
         (i.e. ``sum(segment_ratios) = 1``). If `segment_ratios` is
         ``None``, segments of equal size are considered (i.e.
         ``segment_ratios[v] = 1 / n_segments``).
+    order : int, default: 101
+        Order of the Gauss-Legendre quadrature to evaluate thermal
+        response factors to points outside the borehole, and to evaluate
+        coeffcient matrices for fluid and heat exctraction rate profiles.
+    order_to_self : int, default: 21
+        Order of the tanh-sinh quadrature to evaluate thermal
+        response factors to nodes on the borehole. Correponds to the
+        number of quadrature points along each subinterval delimited
+        by nodes and edges of the segments.
 
     Attributes
     ----------
@@ -108,8 +118,8 @@ class SingleUTube(_Tube):
         return a_in
 
     @classmethod
-    @partial(jit, static_argnames=['cls'])
-    def _fluid_temperature_a_b(cls, xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    @partial(jit, static_argnames=['cls', 'order'])
+    def _fluid_temperature_a_b(cls, xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, order: int = 101) -> Array:
         """Borehole wall coefficient to evaluate the fluid temperatures.
 
         Parameters
@@ -141,11 +151,8 @@ class SingleUTube(_Tube):
             (`n_nodes`, `n_nodes`,) array of polynomial coefficients
             for the evaluation of the polynomial basis functions along
             the borehole segments as a function of `xi_p`.
-        x : array
-            Array of coordinates along the borehole segment to evaluate the
-            integrand function.
-        w : array
-            Integration weights associated with coordinates `x`.
+        order : int, default: 101
+            Order of the numerical quadrature.
 
         Returns
         -------
@@ -155,11 +162,11 @@ class SingleUTube(_Tube):
 
         """
         b_b = cls._outlet_fluid_temperature_a_b(
-            beta_ij, top_connectivity, None, s_coefs, J_coefs, psi_coefs, x, w)
+            beta_ij, top_connectivity, None, s_coefs, J_coefs, psi_coefs, order)
         c_out = cls._general_solution_a_out(
             xi_p, index, beta_ij, s_coefs)
         c_b = cls._general_solution_a_b(
-            xi_p, index, beta_ij, s_coefs, J_coefs, psi_coefs, x, w)
+            xi_p, index, beta_ij, s_coefs, J_coefs, psi_coefs, order)
         a_b = c_b + jnp.outer(c_out, b_b)
         return a_b
 
@@ -225,8 +232,8 @@ class SingleUTube(_Tube):
         return a_out
 
     @classmethod
-    @partial(jit, static_argnames=['cls'])
-    def _general_solution_a_b(cls, xi_p: float, index: int, beta_ij: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    @partial(jit, static_argnames=['cls', 'order'])
+    def _general_solution_a_b(cls, xi_p: float, index: int, beta_ij: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, order: int = 101) -> Array:
         """Borehole wall coefficient to evaluate the general solution.
 
         Parameters
@@ -249,11 +256,8 @@ class SingleUTube(_Tube):
             (`n_nodes`, `n_nodes`,) array of polynomial coefficients
             for the evaluation of the polynomial basis functions along
             the borehole segments as a function of `xi_p`.
-        x : array
-            Array of coordinates along the borehole segment to evaluate the
-            integrand function.
-        w : array
-            Integration weights associated with coordinates `x`.
+        order : int, default: 101
+            Order of the numerical quadrature.
 
         Returns
         -------
@@ -270,37 +274,38 @@ class SingleUTube(_Tube):
         # Longitudinal position corresponding to coordinate `xi_p`
         s = cls._longitudinal_position(xi_p, index, s_coefs)
 
-        def _integral(_i: int, _factor: float) -> Array:
-            """Integrals over a portion of a segment."""
-            # Rescale integration points and weights
-            _x = _factor * (x + 1) - 1
-            _w = _factor * w
+        def general_solution_integrand(_xi_p: float, _i: int) -> Array:
+            """Integrand of the general solution."""
             # Longitudinal positions, norms of Jacobian and basis functions
             # at integration points
-            _t = cls._longitudinal_position(_x, _i, s_coefs)
-            _J = cls._norm_of_jacobian(_x, _i, J_coefs)
-            _psi = vmap(
-                Basis._f_psi,
-                in_axes=(0, None),
-                out_axes=-1
-            )(_x, psi_coefs)
+            _t = cls._longitudinal_position(_xi_p, _i, s_coefs)
+            _J = cls._norm_of_jacobian(_xi_p, _i, J_coefs)
+            _psi = Basis._f_psi(_xi_p, psi_coefs)
+            # Integrand
+            _integrand = _J * jnp.stack(
+                [
+                    _psi * cls._f4(s - _t, beta_ij),
+                    -_psi * cls._f5(s - _t, beta_ij)
+                ]
+            )
+            return _integrand
 
-            # Integral of the function f4
-            _integrand_f4 = _J * cls._f4(s - _t, beta_ij)
-            # Integral of the function f5
-            _integrand_f5 = -_J * cls._f5(s - _t, beta_ij)
-            _a_b = jnp.stack([(_integrand_f4 * _psi) @ _w, (_integrand_f5 * _psi) @ _w])
+        def _integral(_i: int, _b: float) -> Array:
+            """Integrals over a portion of a segment."""
+            _a_b = quadgl(
+                partial(general_solution_integrand, _i=_i),
+                points=jnp.array([-1., _b]),
+                order=order
+            )
             return _a_b
 
         def _zeros(_i: int) -> Array:
             """Array of zeros for segments below `index`."""
             return jnp.zeros((n_pipes, n_nodes))
 
-        # Ratio of the segment from top to the evaluation point
-        factor = 0.5 * (xi_p + 1)
         branches = [
-            partial(_integral, _factor=1.),
-            partial(_integral, _factor=factor),
+            partial(_integral, _b=1.),
+            partial(_integral, _b=xi_p),
             _zeros
         ]
 
@@ -308,7 +313,7 @@ class SingleUTube(_Tube):
         def _evaluate_integrals(_i, _a_b):
             _a_b = _a_b.at[:, _i, :].set(switch(_i - index + 1, branches, _i))
             return _a_b
-        a_b = fori_loop(0, n_segments, _evaluate_integrals, a_b)
+        a_b = fori_loop(0, n_segments, _evaluate_integrals, a_b, unroll=True)
 
         return a_b.reshape(n_pipes, -1)
 
@@ -353,8 +358,8 @@ class SingleUTube(_Tube):
         return a_in
 
     @classmethod
-    @partial(jit, static_argnames=['cls'])
-    def _outlet_fluid_temperature_a_b(cls, beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    @partial(jit, static_argnames=['cls', 'order'])
+    def _outlet_fluid_temperature_a_b(cls, beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, order: int = 101) -> Array:
         """Borehole coefficient to evaluate the outlet fluid temperature.
 
         Parameters
@@ -386,11 +391,8 @@ class SingleUTube(_Tube):
             (`n_nodes`, `n_nodes`,) array of polynomial coefficients
             for the evaluation of the polynomial basis functions along
             the borehole segments as a function of `xi_p`.
-        x : array
-            Array of coordinates along the borehole segment to evaluate the
-            integrand function.
-        w : array
-            Integration weights associated with coordinates `x`.
+        order : int, default: 101
+            Order of the numerical quadrature.
 
         Returns
         -------
@@ -403,33 +405,34 @@ class SingleUTube(_Tube):
         L = cls._longitudinal_position(1., n_segments, s_coefs)
         one_over_f3_minus_f2 = 1 / (cls._f3(L, beta_ij) - cls._f2(L, beta_ij))
 
-        # Longitudinal positions, norms of Jacobian and basis functions
-        t = vmap(
-            cls._longitudinal_position,
-            in_axes=(None, 0, None),
-            out_axes=0
-        )(x, jnp.arange(n_segments), s_coefs)
-        J = vmap(
-            cls._norm_of_jacobian,
-            in_axes=(None, 0, None),
-            out_axes=0
-        )(x, jnp.arange(n_segments), J_coefs)
-        psi = vmap(
-            Basis._f_psi,
-            in_axes=(0, None),
-            out_axes=-1
-        )(x, psi_coefs)
-
-        # Integral of the function
-        integrand = one_over_f3_minus_f2 * J * (
-            cls._f4(L - t, beta_ij)
-            + cls._f5(L - t, beta_ij)
+        def outlet_fluid_temperature_integrand(_xi_p: float, _i: int) -> Array:
+            """Integrand function."""
+            # Longitudinal positions, norms of Jacobian and basis functions
+            # at integration points
+            _t = cls._longitudinal_position(_xi_p, _i, s_coefs)
+            _J = cls._norm_of_jacobian(_xi_p, _i, J_coefs)
+            _psi = Basis._f_psi(_xi_p, psi_coefs)
+            # Integrand
+            _integrand = _psi * _J * one_over_f3_minus_f2 * (
+                cls._f4(L - _t, beta_ij)
+                + cls._f5(L - _t, beta_ij)
             )
+            return _integrand
+
+        def outlet_fluid_temperature_integral(_i: int) -> Array:
+            """Integrals over a segment."""
+            _integral = quadgl(
+                partial(outlet_fluid_temperature_integrand, _i= _i),
+                order=order
+            )
+            return _integral
+
         a_b = vmap(
-            jnp.outer,
-            in_axes=(-1, -1),
-            out_axes=-1
-        )(integrand, psi) @ w
+            outlet_fluid_temperature_integral,
+            in_axes=0,
+            out_axes=0
+        )(jnp.arange(n_segments))
+
         return a_b.flatten()
 
     @staticmethod

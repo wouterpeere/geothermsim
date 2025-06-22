@@ -396,7 +396,7 @@ class Network(Borefield):
         return a_in, a_b
 
     @classmethod
-    def from_dimensions(cls, L: ArrayLike, D: ArrayLike, r_b: ArrayLike, x: ArrayLike, y: ArrayLike, R_d: ArrayLike | Callable[[float], Array], basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None, order: int | None = None) -> Self:
+    def from_dimensions(cls, L: ArrayLike, D: ArrayLike, r_b: ArrayLike, x: ArrayLike, y: ArrayLike, R_d: ArrayLike | Callable[[float], Array], basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None, order: int = 101, order_to_self: int = 21) -> Self:
         """Field of straight boreholes from their dimensions.
 
         Parameters
@@ -430,6 +430,15 @@ class Network(Borefield):
             (i.e. ``sum(segment_ratios) = 1``). If `segment_ratios` is
             ``None``, segments of equal size are considered (i.e.
             ``segment_ratios[v] = 1 / n_segments``).
+        order : int, default: 101
+            Order of the Gauss-Legendre quadrature to evaluate thermal
+            response factors to points outside the borehole, and to evaluate
+            coeffcient matrices for fluid and heat exctraction rate profiles.
+        order_to_self : int, default: 21
+            Order of the tanh-sinh quadrature to evaluate thermal
+            response factors to nodes on the borehole. Correponds to the
+            number of quadrature points along each subinterval delimited
+            by nodes and edges of the segments.
 
         Returns
         -------
@@ -455,11 +464,11 @@ class Network(Borefield):
         boreholes = []
         for j in range(n_boreholes):
             path = Path.Line(L[j], D[j], x[j], y[j], tilt[j], orientation[j])
-            boreholes.append(SingleUTube(R_d, r_b[j], path, basis, n_segments, segment_ratios=segment_ratios))
+            boreholes.append(SingleUTube(R_d, r_b[j], path, basis, n_segments, segment_ratios=segment_ratios, order=order, order_to_self=order_to_self))
         return cls(boreholes)
 
     @classmethod
-    def rectangle_field(cls, N_1: int, N_2: int, B_1: float, B_2: float, L: float, D: float, r_b: float, R_d: ArrayLike | Callable[[float], Array], basis: Basis, n_segments: int, segment_ratios: ArrayLike | None = None, order: int | None = None) -> Self:
+    def rectangle_field(cls, N_1: int, N_2: int, B_1: float, B_2: float, L: float, D: float, r_b: float, R_d: ArrayLike | Callable[[float], Array], basis: Basis, n_segments: int, segment_ratios: ArrayLike | None = None, order: int = 101, order_to_self: int = 21) -> Self:
         """Field of vertical boreholes in a rectangular configuration.
 
         Parameters
@@ -487,6 +496,15 @@ class Network(Borefield):
             (i.e. ``sum(segment_ratios) = 1``). If `segment_ratios` is
             ``None``, segments of equal size are considered (i.e.
             ``segment_ratios[v] = 1 / n_segments``).
+        order : int, default: 101
+            Order of the Gauss-Legendre quadrature to evaluate thermal
+            response factors to points outside the borehole, and to evaluate
+            coeffcient matrices for fluid and heat exctraction rate profiles.
+        order_to_self : int, default: 21
+            Order of the tanh-sinh quadrature to evaluate thermal
+            response factors to nodes on the borehole. Correponds to the
+            number of quadrature points along each subinterval delimited
+            by nodes and edges of the segments.
 
         Returns
         -------
@@ -497,5 +515,5 @@ class Network(Borefield):
         # Borehole positions and orientation
         x = jnp.tile(jnp.arange(N_1), N_2) * B_1
         y = jnp.repeat(jnp.arange(N_2), N_1) * B_2
-        return cls.from_dimensions(L, D, r_b, x, y, R_d, basis, n_segments, segment_ratios=segment_ratios)
+        return cls.from_dimensions(L, D, r_b, x, y, R_d, basis, n_segments, segment_ratios=segment_ratios, order=order, order_to_self=order_to_self)
         

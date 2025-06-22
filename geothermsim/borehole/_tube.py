@@ -35,6 +35,15 @@ class _Tube(Borehole, ABC):
         (i.e. ``sum(segment_ratios) = 1``). If `segment_ratios` is
         ``None``, segments of equal size are considered (i.e.
         ``segment_ratios[v] = 1 / n_segments``).
+    order : int, default: 101
+        Order of the Gauss-Legendre quadrature to evaluate thermal
+        response factors to points outside the borehole, and to evaluate
+        coeffcient matrices for fluid and heat exctraction rate profiles.
+    order_to_self : int, default: 21
+        Order of the tanh-sinh quadrature to evaluate thermal
+        response factors to nodes on the borehole. Correponds to the
+        number of quadrature points along each subinterval delimited
+        by nodes and edges of the segments.
     parallel : bool, default: True
         True if pipes are in parallel. False if pipes are in series.
 
@@ -69,7 +78,7 @@ class _Tube(Borehole, ABC):
 
     """
 
-    def __init__(self, R_d: ArrayLike | Callable[[float], Array], r_b: float, path: Path, basis: Basis, n_segments: int, segment_ratios: ArrayLike | None = None, parallel: bool = True):
+    def __init__(self, R_d: ArrayLike | Callable[[float], Array], r_b: float, path: Path, basis: Basis, n_segments: int, segment_ratios: ArrayLike | None = None, order: int = 101, order_to_self: int = 21, parallel: bool = True):
         # Runtime type validation
         if not isinstance(R_d, ArrayLike) and not callable(R_d):
             raise TypeError(f"Expected arraylike or callable input; got {R_d}")
@@ -150,25 +159,7 @@ class _Tube(Borehole, ABC):
             self._top_connectivity,
             self._mixing,
             self._s_coefs)
-        b = vmap(
-            vmap(
-                self._heat_extraction_rate_a_in,
-                in_axes=(0, None, None, None, None, None, None),
-                out_axes=0
-                ),
-            in_axes=(None, 0, None, None, None, None, None),
-            out_axes=0
-            )(
-            self.basis.xi,
-            jnp.arange(self.n_segments),
-            m_flow_pipe,
-            cp_f,
-            beta_ij,
-            self._top_connectivity,
-            self._s_coefs
-        ).flatten() @ self.w
-        # Effective borehole thermal resistance
-        R_b = -0.5 * self.L * (1. + a) / b
+        R_b = 0.5 * self.L / (m_flow * cp_f) * (1. + a) / (1. - a)
         return R_b
 
     def g(self, xi: Array | float, m_flow: float, cp_f: float) -> Tuple[Array | float, Array]:
@@ -397,7 +388,7 @@ class _Tube(Borehole, ABC):
             )(xi_p, index, beta_ij, self._top_connectivity, self._s_coefs)
             a_b = vmap(
                 self._fluid_temperature_a_b,
-                in_axes=(0, 0, None, None, None, None, None, None, None),
+                in_axes=(0, 0, None, None, None, None, None, None),
                 out_axes=0
             )(
                 xi_p,
@@ -407,8 +398,7 @@ class _Tube(Borehole, ABC):
                 self._s_coefs,
                 self._J_coefs,
                 self.basis._psi_coefs,
-                self.basis._x_gl,
-                self.basis._w_gl
+                self.order
             )
         else:
             xi_p, index = self._segment_coordinate(xi, self.xi_edges)
@@ -426,8 +416,7 @@ class _Tube(Borehole, ABC):
                 self._s_coefs,
                 self._J_coefs,
                 self.basis._psi_coefs,
-                self.basis._x_gl,
-                self.basis._w_gl
+                self.order
             )
         return a_in, a_b
 
@@ -475,7 +464,7 @@ class _Tube(Borehole, ABC):
             )
             a_b = vmap(
                 self._heat_extraction_rate_a_b,
-                in_axes=(0, 0, None, None, None, None, None, None, None, None, None),
+                in_axes=(0, 0, None, None, None, None, None, None, None, None),
                 out_axes=0
             )(
                 xi_p,
@@ -487,8 +476,7 @@ class _Tube(Borehole, ABC):
                 self._s_coefs,
                 self._J_coefs,
                 self.basis._psi_coefs,
-                self.basis._x_gl,
-                self.basis._w_gl
+                self.order
             )
         else:
             xi_p, index = self._segment_coordinate(xi, self.xi_edges)
@@ -511,8 +499,7 @@ class _Tube(Borehole, ABC):
                 self._s_coefs,
                 self._J_coefs,
                 self.basis._psi_coefs,
-                self.basis._x_gl,
-                self.basis._w_gl
+                self.order
             )
         return a_in, a_b
 
@@ -558,9 +545,9 @@ class _Tube(Borehole, ABC):
         a_b = vmap(
             vmap(
                 self._heat_extraction_rate_a_b,
-                in_axes=(0, None, None, None, None, None, None, None, None, None, None),
+                in_axes=(0, None, None, None, None, None, None, None, None, None),
                 out_axes=0),
-            in_axes=(None, 0, None, None, None, None, None, None, None, None, None),
+            in_axes=(None, 0, None, None, None, None, None, None, None, None),
             out_axes=0
         )(
             xi_p,
@@ -572,8 +559,7 @@ class _Tube(Borehole, ABC):
             self._s_coefs,
             self._J_coefs,
             self.basis._psi_coefs,
-            self.basis._x_gl,
-            self.basis._w_gl
+            self.order
         )
         return a_in.flatten(), a_b.reshape(self.n_nodes, self.n_nodes)
 
@@ -610,8 +596,7 @@ class _Tube(Borehole, ABC):
             self._s_coefs,
             self._J_coefs,
             self.basis._psi_coefs,
-            self.basis._x_gl,
-            self.basis._w_gl
+            self.order
         )
         return a_in, a_b
 
@@ -653,7 +638,7 @@ class _Tube(Borehole, ABC):
 
     @classmethod
     @abstractmethod
-    def _fluid_temperature_a_b(cls, xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    def _fluid_temperature_a_b(cls, xi_p: float, index: int, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, order: int = 101) -> Array:
         """Borehole wall coefficient to evaluate the fluid temperatures.
 
         Parameters
@@ -685,11 +670,8 @@ class _Tube(Borehole, ABC):
             (`n_nodes`, `n_nodes`,) array of polynomial coefficients
             for the evaluation of the polynomial basis functions along
             the borehole segments as a function of `xi_p`.
-        x : array
-            Array of coordinates along the borehole segment to evaluate the
-            integrand function.
-        w : array
-            Integration weights associated with coordinates `x`.
+        order : int, default: 101
+            Order of the numerical quadrature.
 
         Returns
         -------
@@ -751,8 +733,8 @@ class _Tube(Borehole, ABC):
         return a_in
 
     @classmethod
-    @partial(jit, static_argnames=['cls'])
-    def _heat_extraction_rate_a_b(cls, xi_p: float, index: int, m_flow_pipe: float, cp_f: float, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    @partial(jit, static_argnames=['cls', 'order'])
+    def _heat_extraction_rate_a_b(cls, xi_p: float, index: int, m_flow_pipe: float, cp_f: float, beta_ij: Array, top_connectivity: Tuple[Array, Array], s_coefs: Array, J_coefs: Array, psi_coefs: Array, order: int = 101) -> Array:
         """Borehole wall coefficient to evaluate the heat extraction rate.
 
         Parameters
@@ -787,11 +769,8 @@ class _Tube(Borehole, ABC):
             (`n_nodes`, `n_nodes`,) array of polynomial coefficients
             for the evaluation of the polynomial basis functions along
             the borehole segments as a function of `xi_p`.
-        x : array
-            Array of coordinates along the borehole segment to evaluate the
-            integrand function.
-        w : array
-            Integration weights associated with coordinates `x`.
+        order : int, default: 101
+            Order of the numerical quadrature.
 
         Returns
         -------
@@ -809,8 +788,7 @@ class _Tube(Borehole, ABC):
             s_coefs,
             J_coefs,
             psi_coefs,
-            x,
-            w
+            order
         )
         R_d = 1 / (m_flow_pipe * cp_f * beta_ij)
         R_d_diag = jnp.diag(R_d)
@@ -859,7 +837,7 @@ class _Tube(Borehole, ABC):
 
     @classmethod
     @abstractmethod
-    def _outlet_fluid_temperature_a_b(cls, beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    def _outlet_fluid_temperature_a_b(cls, beta_ij: Array, top_connectivity: Tuple[Array, Array], mixing: Array, s_coefs: Array, J_coefs: Array, psi_coefs: Array, order: int = 101) -> Array:
         """Borehole coefficient to evaluate the outlet fluid temperature.
 
         Parameters
@@ -892,11 +870,8 @@ class _Tube(Borehole, ABC):
             (`n_nodes`, `n_nodes`,) array of polynomial coefficients
             for the evaluation of the polynomial basis functions along
             the borehole segments as a function of `xi_p`.
-        x : array
-            Array of coordinates along the borehole segment to evaluate the
-            integrand function.
-        w : array
-            Integration weights associated with coordinates `x`.
+        order : int, default: 101
+            Order of the numerical quadrature.
 
         Returns
         -------
@@ -908,7 +883,7 @@ class _Tube(Borehole, ABC):
         ...
 
     @classmethod
-    def from_dimensions(cls, R_d: ArrayLike | Callable[[float], Array], L: float, D: float, r_b: float, x: float, y: float, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None, parallel: bool = True) -> Self:
+    def from_dimensions(cls, R_d: ArrayLike | Callable[[float], Array], L: float, D: float, r_b: float, x: float, y: float, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None, order: int = 101, order_to_self: int = 21, parallel: bool = True) -> Self:
         """Straight borehole from its dimensions.
 
         Parameters
@@ -942,6 +917,15 @@ class _Tube(Borehole, ABC):
             (i.e. ``sum(segment_ratios) = 1``). If `segment_ratios` is
             ``None``, segments of equal size are considered (i.e.
             ``segment_ratios[v] = 1 / n_segments``).
+        order : int, default: 101
+            Order of the Gauss-Legendre quadrature to evaluate thermal
+            response factors to points outside the borehole, and to evaluate
+            coeffcient matrices for fluid and heat exctraction rate profiles.
+        order_to_self : int, default: 21
+            Order of the tanh-sinh quadrature to evaluate thermal
+            response factors to nodes on the borehole. Correponds to the
+            number of quadrature points along each subinterval delimited
+            by nodes and edges of the segments.
         parallel : bool, default: True
             True if pipes are in parallel. False if pipes are in series.
 
@@ -952,4 +936,4 @@ class _Tube(Borehole, ABC):
 
         """
         path = Path.Line(L, D, x, y, tilt, orientation)
-        return cls(R_d, r_b, path, basis, n_segments, segment_ratios=segment_ratios, parallel=parallel)
+        return cls(R_d, r_b, path, basis, n_segments, segment_ratios=segment_ratios, order=order, order_to_self=order_to_self, parallel=parallel)
