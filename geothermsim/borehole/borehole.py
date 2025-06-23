@@ -38,10 +38,10 @@ class Borehole:
     order : int, default: 101
         Order of the Gauss-Legendre quadrature to evaluate thermal
         response factors to points outside the borehole, and to evaluate
-        coeffcient matrices for fluid and heat exctraction rate profiles.
+        coefficient matrices for fluid and heat extraction rate profiles.
     order_to_self : int, default: 21
         Order of the tanh-sinh quadrature to evaluate thermal
-        response factors to nodes on the borehole. Correponds to the
+        response factors to nodes on the borehole. Corresponds to the
         number of quadrature points along each subinterval delimited
         by nodes and edges of the segments.
 
@@ -787,7 +787,8 @@ class Borehole:
         array
             (`n_nodes`,) array of the point heat source solution.
         """
-        def thermal_reponse_factor_integrand(xi_p):
+        def thermal_reponse_factor_integrand(xi_p: float) -> Array:
+            """Integrand of the thermal response factor to a point."""
             J = cls._norm_of_jacobian(xi_p, index, J_coefs)
             psi = Basis._f_psi(xi_p, psi_coefs)
             h_point_source = psi * J * cls._point_heat_source(
@@ -840,7 +841,8 @@ class Borehole:
         array
             (`n_nodes`,) array of the point heat source solution.
         """
-        def thermal_reponse_factor_to_self_integrand(xi_p):
+        def thermal_reponse_factor_to_self_integrand(xi_p: float) -> Array:
+            """Integrand of the thermal response factor to a node."""
             J = cls._norm_of_jacobian(xi_p, index, J_coefs)
             psi = Basis._f_psi(xi_p, psi_coefs)
             h_point_source = psi * J * cls._point_heat_source(
@@ -897,10 +899,10 @@ class Borehole:
         order : int, default: 101
             Order of the Gauss-Legendre quadrature to evaluate thermal
             response factors to points outside the borehole, and to evaluate
-            coeffcient matrices for fluid and heat exctraction rate profiles.
+            coefficient matrices for fluid and heat extraction rate profiles.
         order_to_self : int, default: 21
             Order of the tanh-sinh quadrature to evaluate thermal
-            response factors to nodes on the borehole. Correponds to the
+            response factors to nodes on the borehole. Corresponds to the
             number of quadrature points along each subinterval delimited
             by nodes and edges of the segments.
 

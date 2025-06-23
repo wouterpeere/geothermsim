@@ -27,7 +27,7 @@ def quad(fun: Callable[[float], Array | float], points: Array = jnp.array([-1., 
     Returns
     -------
     array or float
-        Intregal of fun.
+        Intregal of `fun`.
 
     """
     if rule.lower() == 'gl' or rule.lower() == 'gauss-legendre':
@@ -52,7 +52,7 @@ def quadgl(fun: Callable[[float], Array | float], points: Array = jnp.array([-1.
     Returns
     -------
     array or float
-        Intregal of fun.
+        Intregal of `fun`.
 
     """
     x, w = _quadgl_weights(order)
@@ -75,7 +75,7 @@ def quadts(fun: Callable[[float], Array | float], points: Array = jnp.array([-1.
     Returns
     -------
     array or float
-        Intregal of fun.
+        Intregal of `fun`.
 
     """
     x, w = _quadts_weights(order)
@@ -100,7 +100,7 @@ def _fixed_quad(fun: Callable[[float], Array | float], a: float, b: float, x: Ar
     Returns
     -------
     array or float
-        Intregal of fun.
+        Intregal of `fun`.
 
     """
     x = 0.5 * (b + a) + 0.5 * (b - a) * x
@@ -126,7 +126,7 @@ def _quad(fun: Callable[[float], Array | float], points: Array, x: Array, w: Arr
     Returns
     -------
     array or float
-        Intregal of fun.
+        Intregal of `fun`.
 
     """
     a, b = points[:-1], points[1:]
@@ -177,11 +177,7 @@ def _quadts_weights(order: int) -> Tuple[Array, Array]:
 
     """
     one_minus_eps = jnp.array(1.0) - 10 * jnp.finfo(jnp.array(1.0).dtype).eps
-    def tanh_inverse(_x):
-        return 0.5 * jnp.log((1 + _x) / (1 - _x))
-    def sinh_inverse(_x):
-        return jnp.log(_x + jnp.sqrt(_x**2 + 1))
-    t_max = sinh_inverse(2. / jnp.pi * tanh_inverse(one_minus_eps))
+    t_max = jnp.arcsinh(2. / jnp.pi * jnp.arctanh(one_minus_eps))
     t = jnp.linspace(-t_max, t_max, num=order)
 
     x = jnp.tanh(0.5 * jnp.pi * jnp.sinh(t))

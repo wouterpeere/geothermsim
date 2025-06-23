@@ -36,10 +36,10 @@ class SingleUTube(_Tube):
     order : int, default: 101
         Order of the Gauss-Legendre quadrature to evaluate thermal
         response factors to points outside the borehole, and to evaluate
-        coeffcient matrices for fluid and heat exctraction rate profiles.
+        coefficient matrices for fluid and heat extraction rate profiles.
     order_to_self : int, default: 21
         Order of the tanh-sinh quadrature to evaluate thermal
-        response factors to nodes on the borehole. Correponds to the
+        response factors to nodes on the borehole. Corresponds to the
         number of quadrature points along each subinterval delimited
         by nodes and edges of the segments.
 
@@ -313,7 +313,7 @@ class SingleUTube(_Tube):
         def _evaluate_integrals(_i, _a_b):
             _a_b = _a_b.at[:, _i, :].set(switch(_i - index + 1, branches, _i))
             return _a_b
-        a_b = fori_loop(0, n_segments, _evaluate_integrals, a_b, unroll=True)
+        a_b = fori_loop(0, n_segments, _evaluate_integrals, a_b, unroll=False)
 
         return a_b.reshape(n_pipes, -1)
 

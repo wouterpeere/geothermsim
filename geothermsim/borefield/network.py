@@ -433,10 +433,10 @@ class Network(Borefield):
         order : int, default: 101
             Order of the Gauss-Legendre quadrature to evaluate thermal
             response factors to points outside the borehole, and to evaluate
-            coeffcient matrices for fluid and heat exctraction rate profiles.
+            coefficient matrices for fluid and heat extraction rate profiles.
         order_to_self : int, default: 21
             Order of the tanh-sinh quadrature to evaluate thermal
-            response factors to nodes on the borehole. Correponds to the
+            response factors to nodes on the borehole. Corresponds to the
             number of quadrature points along each subinterval delimited
             by nodes and edges of the segments.
 
@@ -499,10 +499,10 @@ class Network(Borefield):
         order : int, default: 101
             Order of the Gauss-Legendre quadrature to evaluate thermal
             response factors to points outside the borehole, and to evaluate
-            coeffcient matrices for fluid and heat exctraction rate profiles.
+            coefficient matrices for fluid and heat extraction rate profiles.
         order_to_self : int, default: 21
             Order of the tanh-sinh quadrature to evaluate thermal
-            response factors to nodes on the borehole. Correponds to the
+            response factors to nodes on the borehole. Corresponds to the
             number of quadrature points along each subinterval delimited
             by nodes and edges of the segments.
 
