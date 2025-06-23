@@ -9,6 +9,7 @@ from jax.typing import ArrayLike
 from ..basis import Basis
 from ..heat_transfer import point_heat_source
 from ..path import Path
+from ..utilities import quad
 
 
 class Borehole:
@@ -34,6 +35,15 @@ class Borehole:
         the borehole. If None, `deg` is either set to `path.deg` (if
         it is not None) or to `n_nodes`. The longitudinal position along
         the borehole is approximated using a degree ``2 * `deg` - 1``.
+    order : int, default: 101
+        Order of the Gauss-Legendre quadrature to evaluate thermal
+        response factors to points outside the borehole, and to evaluate
+        coefficient matrices for fluid and heat extraction rate profiles.
+    order_to_self : int, default: 21
+        Order of the tanh-sinh quadrature to evaluate thermal
+        response factors to nodes on the borehole. Corresponds to the
+        number of quadrature points along each subinterval delimited
+        by nodes and edges of the segments.
 
     Attributes
     ----------
@@ -64,7 +74,7 @@ class Borehole:
 
     """
 
-    def __init__(self, r_b: float, path: Path, basis: Basis, n_segments: int, segment_ratios: ArrayLike | None = None, deg: int | None = None):
+    def __init__(self, r_b: float, path: Path, basis: Basis, n_segments: int, segment_ratios: ArrayLike | None = None, deg: int | None = None, order: int = 101, order_to_self: int = 21):
         # Runtime type validation
         if not isinstance(segment_ratios, ArrayLike) and segment_ratios is not None:
             raise TypeError(f"Expected arraylike or None input; got {segment_ratios}")
@@ -87,6 +97,8 @@ class Borehole:
             else:
                 deg = path.deg
         self.deg = deg
+        self.order = order
+        self.order_to_self = order_to_self
         # Segment edges
         xi_edges = 2. * jnp.cumulative_sum(segment_ratios, include_initial=True) - 1.
         self.xi_edges = xi_edges
@@ -418,7 +430,7 @@ class Borehole:
             (`n_nodes`,) array of thermal response factors.
         """
         h_to_node = vmap(
-            self._thermal_response_factor,
+            self._thermal_response_factor_to_self,
             in_axes=(0, None, None, None, None, None, None, None, None, None),
             out_axes=0
         )(
@@ -430,8 +442,8 @@ class Borehole:
             self._p_coefs,
             self._J_coefs,
             self.basis._psi_coefs,
-            self.basis._x_ts_nodes,
-            self.basis._w_ts_nodes
+            self.basis.xi,
+            self.order_to_self
         )
         return h_to_node.flatten()
 
@@ -458,7 +470,7 @@ class Borehole:
         """
         h_to_node = vmap(
             self._thermal_response_factor,
-            in_axes=(0, None, None, None, None, None, None, None, None, None),
+            in_axes=(0, None, None, None, None, None, None, None, None),
             out_axes=0
         )(
             jnp.arange(self.n_segments),
@@ -469,8 +481,7 @@ class Borehole:
             self._p_coefs,
             self._J_coefs,
             self.basis._psi_coefs,
-            self.basis._x_gl,
-            self.basis._w_gl
+            self.order
         )
         return h_to_node.flatten()
 
@@ -739,8 +750,8 @@ class Borehole:
             return xi_p
 
     @classmethod
-    @partial(jit, static_argnames=['cls'])
-    def _thermal_response_factor(cls, index: int, p: Array, time: float, alpha: float, r_min: float, p_coefs: Array, J_coefs: Array, psi_coefs: Array, x: Array, w: Array) -> Array:
+    @partial(jit, static_argnames=['cls', 'order'])
+    def _thermal_response_factor(cls, index: int, p: Array, time: float, alpha: float, r_min: float, p_coefs: Array, J_coefs: Array, psi_coefs: Array, order: int = 101) -> Array:
         """Point heat source solution.
 
         Parameters
@@ -768,36 +779,94 @@ class Borehole:
             (`n_nodes`, `n_nodes`,) array of polynomial coefficients
             for the evaluation of the polynomial basis functions along
             the borehole segments as a function of `xi_p`.
-        x : array
-            Array of coordinates along the borehole segment to evaluate the
-            integrand function.
-        w : array
-            Integration weights associated with coordinates `x`.
+        order : int, default: 101
+            Order of the numerical quadrature.
 
         Returns
         -------
         array
             (`n_nodes`,) array of the point heat source solution.
         """
-        xi_p = x
-        J = cls._norm_of_jacobian(xi_p, index, J_coefs)
-        psi = vmap(
-                Basis._f_psi,
-                in_axes=(0, None),
-                out_axes=-1
-            )(xi_p, psi_coefs)
-        # Point heat source solutions
-        h = psi * J * vmap(
-            cls._point_heat_source,
-            in_axes=(0, None, None, None, None, None, None),
-            out_axes=0
-            )(
-            xi_p, index, p, time, alpha, r_min, p_coefs
-        ) @ w
+        def thermal_reponse_factor_integrand(xi_p: float) -> Array:
+            """Integrand of the thermal response factor to a point."""
+            J = cls._norm_of_jacobian(xi_p, index, J_coefs)
+            psi = Basis._f_psi(xi_p, psi_coefs)
+            h_point_source = psi * J * cls._point_heat_source(
+                xi_p, index, p, time, alpha, r_min, p_coefs)
+            return h_point_source
+
+        h = quad(
+            thermal_reponse_factor_integrand,
+            order=order,
+            rule='gl'
+        )
         return h
 
     @classmethod
-    def from_dimensions(cls, L: float, D: float, r_b: float, x: float, y: float, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None) -> Self:
+    @partial(jit, static_argnames=['cls', 'order'])
+    def _thermal_response_factor_to_self(cls, index: int, p: Array, time: float, alpha: float, r_min: float, p_coefs: Array, J_coefs: Array, psi_coefs: Array, xi: Array, order: int = 21) -> Array:
+        """Point heat source solution.
+
+        Parameters
+        ----------
+        index : int
+            Index of the borehole segment.
+        p : array
+            (3,) array of positions.
+        time : float
+            Time (in seconds).
+        alpha : float
+            Ground thermal diffusivity (in m^2/s).
+        r_min : float
+            Minimum distance (in meters) added to the distance between the
+            heat source and the positions `p`.
+        p_coefs : array
+            (`n_nodes`, `n_segments`, 3) array of polynomial coefficients
+            for the evaluation of the position (in meters) along
+            the borehole segments as a function of `xi_p`.
+        J_coefs : array
+            (`n_nodes`, `n_segments`,) array of polynomial coefficients
+            for the evaluation of the norm of the jacobian (in meters) along
+            the borehole segments as a function of `xi_p`.
+        psi_coefs : array
+            (`n_nodes`, `n_nodes`,) array of polynomial coefficients
+            for the evaluation of the polynomial basis functions along
+            the borehole segments as a function of `xi_p`.
+        order : int, default: 21
+            Order of the numerical quadrature along each subinterval
+            delimited by segment edges and nodes.
+
+        Returns
+        -------
+        array
+            (`n_nodes`,) array of the point heat source solution.
+        """
+        def thermal_reponse_factor_to_self_integrand(xi_p: float) -> Array:
+            """Integrand of the thermal response factor to a node."""
+            J = cls._norm_of_jacobian(xi_p, index, J_coefs)
+            psi = Basis._f_psi(xi_p, psi_coefs)
+            h_point_source = psi * J * cls._point_heat_source(
+                xi_p, index, p, time, alpha, r_min, p_coefs)
+            return h_point_source
+
+        points = jnp.concatenate(
+            [
+                -jnp.ones(1),
+                xi,
+                jnp.ones(1)
+            ]
+        )
+
+        h = quad(
+            thermal_reponse_factor_to_self_integrand,
+            points=points,
+            order=order,
+            rule='ts'
+        )
+        return h
+
+    @classmethod
+    def from_dimensions(cls, L: float, D: float, r_b: float, x: float, y: float, basis: Basis, n_segments: int, tilt: float = 0., orientation: float = 0., segment_ratios: ArrayLike | None = None, order: int = 101, order_to_self: int = 21) -> Self:
         """Straight borehole from its dimensions.
 
         Parameters
@@ -827,6 +896,15 @@ class Borehole:
             (i.e. ``sum(segment_ratios) = 1``). If `segment_ratios` is
             ``None``, segments of equal size are considered (i.e.
             ``segment_ratios[v] = 1 / n_segments``).
+        order : int, default: 101
+            Order of the Gauss-Legendre quadrature to evaluate thermal
+            response factors to points outside the borehole, and to evaluate
+            coefficient matrices for fluid and heat extraction rate profiles.
+        order_to_self : int, default: 21
+            Order of the tanh-sinh quadrature to evaluate thermal
+            response factors to nodes on the borehole. Corresponds to the
+            number of quadrature points along each subinterval delimited
+            by nodes and edges of the segments.
 
         Returns
         -------
@@ -835,4 +913,4 @@ class Borehole:
 
         """
         path = Path.Line(L, D, x, y, tilt, orientation)
-        return cls(r_b, path, basis, n_segments, segment_ratios=segment_ratios)
+        return cls(r_b, path, basis, n_segments, segment_ratios=segment_ratios, order=order, order_to_self=order_to_self)

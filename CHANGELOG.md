@@ -12,6 +12,7 @@
 * [Issue 7](https://github.com/MassimoCimmino/geothermsim/issues/7) - Refactored `Simulation` classes to make functions that encapsulate simulations and g-functions evaluation both jittable and differentiable.
 * [Issue 9](https://github.com/MassimoCimmino/geothermsim/issues/9) - `GroundHeatExchanger` classes now accept arrays of per-pipe thermal conductivity.
 * [Issue 13](https://github.com/MassimoCimmino/geothermsim/issues/13) - Refactored `Borehole` and `Tube` classes to use jitted helper classes and static methods. This decreases the required compilation time when simulating borefields, since now all boreholes rely on the same jitted methods.
+* [Issue 14](https://github.com/MassimoCimmino/geothermsim/issues/14) - Moved quadrature methods from the `Basis` class to the `utilities` module.
 
 
 ## Version 0.1.2 (2025-05-06)
