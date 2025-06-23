@@ -4,7 +4,8 @@ from time import perf_counter
 from typing import Tuple
 
 from jax import numpy as jnp
-from jax import Array, jit, vmap
+from jax import Array, debug, jit, vmap
+from jax.lax import cond, fori_loop
 from jax.scipy.linalg import block_diag
 from jax.typing import ArrayLike
 
@@ -172,34 +173,58 @@ class gFunction:
         if self.p is not None:
             self.T = jnp.zeros((self.n_times, self.n_points))
 
-        # Start simulation
-        for k in range(len(self.time) - 1):
-            # Advance to next time step
-            time = self.loaHisRec.next_time_step()
-            dtime = self.time[k + 1] - self.time[k]
+        def simulate_step(
+            i: int,
+            val: Tuple[Array, Array, Array, Array, Array | None]
+        ) -> Tuple[Array, Array, Array, Array, Array | None]:
+            """Single simulation step."""
+            # Unpack values
+            time, q, T_b, T_f_in, T = val
+            # Time step
+            dtime = time[i + 1] - time[i]
             # Temporal and spatial superposition of past loads
-            T0 = self.loaHisRec.temperature() / (2 * jnp.pi * self.k_s)
+            _q_reconstructed = self.loaHisRec._reconstruct_load_history(
+                time[i + 1], time[1:], q)
+            T0 = self.loaHisRec._temperature(
+                self.loaHisRec.h_to_self,
+                _q_reconstructed
+            ) / (2 * jnp.pi * self.k_s)
             # Build and solve system of equations
-            q, T_b, T_f_in = self._simulate_step(dtime, T0)
+            _q, _T_b, _T_f_in = self._simulate_step(dtime, T0)
             # Apply latest heat extraction rates
-            self.loaHisRec.set_current_load(q)
+            q = self.loaHisRec._current_load(q, _q, i)
             # Store results
-            self.q = self.q.at[k].set(q)
-            self.T_b = self.T_b.at[k].set(T_b)
-            self.T_f_in = self.T_f_in.at[k].set(T_f_in)
+            T_b = T_b.at[i].set(_T_b)
+            T_f_in = T_f_in.at[i].set(_T_f_in)
             # Evaluate ground temperatures
             if self.p is not None:
-                self.T = self.T.at[k].set(
-                    self.loaHisRec.temperature_to_point() / (2 * jnp.pi * self.k_s)
+                _q_reconstructed = self.loaHisRec._reconstruct_load_history(
+                    time[i + 1], time[1:], q)
+                T = T.at[i].set(
+                    self.loaHisRec._temperature_to_point(
+                        self.loaHisRec.h_to_point,
+                        _q_reconstructed
+                    ) / (2 * jnp.pi * self.k_s)
                 )
-            if k >= next_k:
-                next_k += print_every
+            if disp:
                 toc = perf_counter()
-                if disp:
-                    print(
-                        f'Completed {k} of {self.n_times} time steps. '
-                        f'Elapsed time: {toc-tic:.2f} seconds.'
-                    )
+                cond(
+                    (i + 1) % print_every == 0,
+                    lambda _: debug.print(
+                        'Completed {i} of {n_times} time steps. ',
+                        i=i+1, n_times=self.n_times
+                    ),
+                    lambda _: None,
+                    None
+                )
+            return time, q, T_b, T_f_in, T
+        # Pack variables
+        val = self.time, self.q, self.T_b, self.T_f_in, self.T
+        # Run simulation
+        _, self.q, self.T_b, self.T_f_in, self.T = fori_loop(
+            0, self.n_times, simulate_step, val, unroll=False)
+
+        # Outlet fluid temperature
         T_f_out = self.T_f_in - 2 * jnp.pi * self.k_s * self.borefield.L.sum() / (self.m_flow_network * self.cp_f)
         # Average fluid temperature
         T_f = 0.5 * (self.T_f_in + T_f_out)
@@ -209,8 +234,9 @@ class gFunction:
         self.g = T_f - 2 * jnp.pi * self.k_s * R_field
         if disp:
             toc = perf_counter()
-            print(
-                f'Simulation end. Elapsed time: {toc-tic:.2f} seconds.'
+            debug.print(
+                'Simulation end. Elapsed time: {clock:.2f} seconds.',
+                clock=toc-tic
             )
 
     @partial(jit, static_argnames=['self'])

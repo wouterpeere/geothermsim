@@ -6,9 +6,10 @@ from time import perf_counter
 from typing import Tuple
 
 from jax import numpy as jnp
-from jax import Array, jit, vmap
-from jax.scipy.linalg import block_diag
+from jax import Array, debug, jit, vmap
+from jax.lax import cond, fori_loop
 from jax.typing import ArrayLike
+import numpy as np
 
 from ..borefield.network import Network
 from .load_aggregation import LoadAggregation
@@ -189,84 +190,106 @@ class Simulation:
         if disp:
             print('Simulation start.')
         self.loadAgg.reset_history()
-        time = 0.
-        k = 0
-        Q_cycle = cycle(Q)
+
         # Initialize arrays
+        Q = jnp.asarray(Q)
+        n_cycles = np.ceil(self.n_times / len(Q)).astype(int)
         self.T_f_in = jnp.zeros(self.n_times)
         self.T_f_out = jnp.zeros(self.n_times)
-        self.Q = jnp.zeros(self.n_times)
+        self.Q = jnp.tile(Q, n_cycles)[:self.n_times]
         self.m_flow = jnp.zeros(self.n_times)
         if self.store_node_values:
             self.q = jnp.zeros((self.n_times, self.borefield.n_boreholes, self.borefield.n_nodes))
             self.T_b = jnp.zeros((self.n_times, self.borefield.n_boreholes, self.borefield.n_nodes))
+        else:
+            self.q = None
+            self.T_b = None
         if self.p is not None:
             self.T = jnp.zeros((self.n_times, self.n_points))
+        else:
+            self.T = None
 
-        # Start simulation
-        while time < self.tmax:
-            # Advance to next time step
-            time = self.loadAgg.next_time_step()
+        def simulate_step(
+            i: int,
+            val: Tuple[Array, Array, Array, Array, Array, Array | None, Array | None, Array]
+        ) -> Tuple[Array, Array, Array, Array, Array, Array | None, Array | None, Array]:
+            """Single simulation step."""
+            # Unpack values
+            m_flow, Q, T_b, T_f_in, T_f_out, q, T, q_history = val
+            # Time step
+            q_history = self.loadAgg._next_time_step(
+                self.loadAgg.A, q_history)
+            time = (i + 1) * self.dt
+            current_Q = self.Q[i]
+            # Fluid mass flow rate
+            _m_flow = f_m_flow(current_Q)
+            m_flow_network = jnp.sum(_m_flow)
+            m_flow = m_flow.at[i].set(m_flow_network)
             # Temporal and spatial superposition of past loads
             T0 = (
                 self.undisturbed_ground_temperature(
-                    time, self.borefield.p[..., 2])
-                - self.loadAgg.temperature() / (2 * jnp.pi * self.k_s)
+                    time, self.borefield.p[..., 2]
+                )
+                - self.loadAgg._temperature(
+                    self.loadAgg.h_to_self,
+                    q_history
+                ) / (2 * jnp.pi * self.k_s)
             )
-            # Current load and fluid mass flow rate
-            current_Q = next(Q_cycle)
-            self.Q = self.Q.at[k].set(current_Q)
-            m_flow = f_m_flow(current_Q)
-            if len(jnp.shape(m_flow)) == 0:
-                m_flow_network = m_flow
-            else:
-                m_flow_network = m_flow.sum()
-            self.m_flow = self.m_flow.at[k].set(m_flow_network)
-            # Only solve if the total fluid mass flow rate is not zero
-            if m_flow_network > m_flow_small:
-                # Build and solve system of equations
-                q, T_b, T_f_in, T_f_out = self._simulate_step(
-                    jnp.maximum(m_flow, m_flow_small),
-                    current_Q,
-                    T0)
-                self.T_f_in = self.T_f_in.at[k].set(T_f_in)
-                self.T_f_out = self.T_f_out.at[k].set(T_f_out)
-                # Apply latest heat extraction rates
-                self.loadAgg.set_current_load(q)
-                if self.store_node_values:
-                    self.q = self.q.at[k].set(q)
-                    self.T_b = self.T_b.at[k].set(T_b)
-            else:
-                # If the fluid mass flow rate is zero,
-                # set fluid temperatures to nan
-                self.Q = self.Q.at[k].set(0.)
-                self.T_f_in = self.T_f_in.at[k].set(jnp.nan)
-                self.T_f_out = self.T_f_out.at[k].set(jnp.nan)
-                if self.store_node_values:
-                    self.T_b = self.T_b.at[k].set(T0)
+            # Build and solve system of equations
+            _Q, _q, _T_b, _T_f_in, _T_f_out = self._simulate_step(
+                _m_flow,
+                current_Q,
+                T0,
+                m_flow_small
+            )
+            # Apply latest heat extraction rates
+            q_history = self.loadAgg._current_load(q_history, _q)
+            # Store results
+            Q = Q.at[i].set(_Q)
+            T_f_in = T_f_in.at[i].set(_T_f_in)
+            T_f_out = T_f_out.at[i].set(_T_f_out)
+            if self.store_node_values:
+                q = q.at[i].set(_q)
+                T_b = T_b.at[i].set(_T_b)
             # Evaluate ground temperatures
             if self.p is not None:
-                self.T = self.T.at[k].set(
+                T = T.at[i].set(
                     self.undisturbed_ground_temperature(
-                        time, self.p[:, 2])
-                    - self.loadAgg.temperature_to_point() / (2 * jnp.pi * self.k_s))
-            k += 1
-            if k >= next_k:
-                next_k += print_every
-                toc = perf_counter()
-                if disp:
-                    print(
-                        f'Completed {k} of {self.n_times} time steps. '
-                        f'Elapsed time: {toc-tic:.2f} seconds.'
+                        time, self.p[:, 2]
                     )
+                    - self.loadAgg._temperature_to_point(
+                        self.loadAgg.h_to_point,
+                        q_history
+                    ) / (2 * jnp.pi * self.k_s)
+                )
+            if disp:
+                toc = perf_counter()
+                cond(
+                    (i + 1) % print_every == 0,
+                    lambda _: debug.print(
+                        'Completed {i} of {n_times} time steps. ',
+                        i=i+1, n_times=self.n_times
+                    ),
+                    lambda _: None,
+                    None
+                )
+            return m_flow, Q, T_b, T_f_in, T_f_out, q, T, q_history
+
+        # Pack variables
+        val = self.m_flow, self.Q, self.T_b, self.T_f_in, self.T_f_out, self.q, self.T, self.loadAgg.q
+        # Run simulation
+        self.m_flow, self.Q, self.T_b, self.T_f_in, self.T_f_out, self.q, self.T, _ = fori_loop(
+            0, self.n_times, simulate_step, val, unroll=False)
+
         if disp:
             toc = perf_counter()
-            print(
-                f'Simulation end. Elapsed time: {toc-tic:.2f} seconds.'
+            debug.print(
+                'Simulation end. Elapsed time: {clock:.2f} seconds.',
+                clock=toc-tic
             )
 
     @partial(jit, static_argnames=['self'])
-    def _simulate_step(self, m_flow: float | Array, Q: float, T0: Array) -> Tuple[Array, Array, float, float]:
+    def _simulate_step(self, m_flow: float | Array, Q: float, T0: Array, m_flow_small: float) -> Tuple[float, Array, Array, float, float]:
         """Solve a single time step.
 
         Parameters
@@ -279,9 +302,17 @@ class Simulation:
         T0 : array
             Borehole wall temperature at nodes assuming zero heat
             extraction rate (in degree Celsius).
+        m_flow_small : float
+            The minimum fluid mass flow rate (in kg/s). If `f_m_flow`
+            returns a smaller total value, the fluid mass flow rate and
+            the heat extraction rate are set to zero. If the total value
+            is above `m_flow_small`, the minimum fluid mas flow rate per
+            borehole is set to `m_flow_small`.
 
         Returns
         -------
+        Q : float
+            The total heat extraction rate (in watts).
         q : array
             The heat extraction rate at the nodes (in W/m).
         T_b : array
@@ -291,6 +322,55 @@ class Simulation:
             The inlet fluid temperature (in degree Celsius).
 
         """
+        m_flow_network = jnp.sum(m_flow)
+        Q, q, T_b, T_f_in, T_f_out = cond(
+            m_flow_network > m_flow_small,
+            self._simulate_step_flow,
+            self._simulate_step_no_flow,
+            m_flow,
+            Q,
+            T0,
+            m_flow_small
+        )
+        return Q, q, T_b, T_f_in, T_f_out
+
+    @partial(jit, static_argnames=['self'])
+    def _simulate_step_flow(self, m_flow: float | Array, Q: float, T0: Array, m_flow_small: float) -> Tuple[float, Array, Array, float, float]:
+        """Solve a single time step.
+
+        Parameters
+        ----------
+        m_flow : float or array
+            Total fluid mass flow rate (in kg/s), or array of fluid mass
+            flow rate per borehole.
+        Q : float
+            The total heat extraction rate (in watts).
+        T0 : array
+            Borehole wall temperature at nodes assuming zero heat
+            extraction rate (in degree Celsius).
+        m_flow_small : float
+            The minimum fluid mass flow rate (in kg/s). If `f_m_flow`
+            returns a smaller total value, the fluid mass flow rate and
+            the heat extraction rate are set to zero. If the total value
+            is above `m_flow_small`, the minimum fluid mas flow rate per
+            borehole is set to `m_flow_small`.
+
+        Returns
+        -------
+        Q : float
+            The total heat extraction rate (in watts).
+        q : array
+            The heat extraction rate at the nodes (in W/m).
+        T_b : array
+            The borehole wall temperature at the nodes (in degree
+            Celsius).
+        T_f_in : float
+            The inlet fluid temperature (in degree Celsius).
+        T_f_out : float
+            The outlet fluid temperature (in degree Celsius).
+
+        """
+        m_flow = jnp.maximum(m_flow, m_flow_small)
         # Build and solve system of equations
         A, B = self.update_system_of_equations(
             m_flow,
@@ -302,4 +382,48 @@ class Simulation:
         T_b = T0 - jnp.tensordot(self.h_to_self, q, axes=([-2, -1], [-2, -1]))
         T_f_in = X[-1]
         T_f_out = T_f_in + Q / (jnp.sum(m_flow) * self.cp_f)
-        return q, T_b, T_f_in, T_f_out
+        return Q, q, T_b, T_f_in, T_f_out
+
+    @partial(jit, static_argnames=['self'])
+    def _simulate_step_no_flow(self, m_flow: float | Array, Q: float, T0: Array, m_flow_small: float) -> Tuple[float, Array, Array, float, float]:
+        """Solve a single time step with zero mass flow rate.
+
+        Parameters
+        ----------
+        m_flow : float or array
+            Total fluid mass flow rate (in kg/s), or array of fluid mass
+            flow rate per borehole.
+        Q : float
+            The total heat extraction rate (in watts).
+        T0 : array
+            Borehole wall temperature at nodes assuming zero heat
+            extraction rate (in degree Celsius).
+        m_flow_small : float
+            The minimum fluid mass flow rate (in kg/s). If `f_m_flow`
+            returns a smaller total value, the fluid mass flow rate and
+            the heat extraction rate are set to zero. If the total value
+            is above `m_flow_small`, the minimum fluid mas flow rate per
+            borehole is set to `m_flow_small`.
+
+        Returns
+        -------
+        Q : float
+            The total heat extraction rate (in watts).
+        q : array
+            The heat extraction rate at the nodes (in W/m).
+        T_b : array
+            The borehole wall temperature at the nodes (in degree
+            Celsius).
+        T_f_in : nan
+            The inlet fluid temperature (in degree Celsius).
+        T_f_out : nan
+            The outlet fluid temperature (in degree Celsius).
+
+        """
+        # Store results
+        Q = 0.
+        q = jnp.zeros((self.borefield.n_boreholes, self.borefield.n_nodes))
+        T_b = jnp.full((self.borefield.n_boreholes, self.borefield.n_nodes), T0)
+        T_f_in = jnp.nan
+        T_f_out = jnp.nan
+        return Q, q, T_b, T_f_in, T_f_out
