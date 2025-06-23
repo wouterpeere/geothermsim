@@ -70,13 +70,13 @@ class Network(Borefield):
 
         """
         m_flow_borehole = self.m_flow_borehole(m_flow)
+        m_flow_network = jnp.sum(m_flow)
         a = jnp.average(
             self._outlet_fluid_temperature(m_flow_borehole, cp_f)[0],
             weights=m_flow_borehole
         )
-        b = jnp.sum(self._heat_extraction_rate(self.xi, m_flow_borehole, cp_f)[0] * self.w)
         # Effective borehole thermal resistance
-        R_field = -0.5 * self.L.sum() * (1. + a) / b
+        R_field = 0.5 * self.L.sum() / (m_flow_network * cp_f) * (1. + a) / (1. - a)
         return R_field
 
     def g(self, xi: Array | float, m_flow: float | Array, cp_f: float) -> Array:
